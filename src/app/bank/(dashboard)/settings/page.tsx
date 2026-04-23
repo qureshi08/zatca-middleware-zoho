@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import { useBankAuthStore } from '@/store/bankAuthStore';
+import { useRouter } from 'next/navigation';
 import { Settings, Globe, Shield, Activity, HelpCircle, Save } from 'lucide-react';
 
 export default function BankSettingsPage() {
-  const { sessionToken, role, setIntegrationConfigured } = useBankAuthStore();
+  const router = useRouter();
+  const { sessionToken, role, setIntegrationConfigured, logout } = useBankAuthStore();
   const [form, setForm] = useState({
     middlewareBaseUrl: 'https://zatca-universal-portal.vercel.app',
     middlewareApiKey: '',
@@ -29,7 +31,10 @@ export default function BankSettingsPage() {
   }, [sessionToken, role]);
 
   const onSave = async () => {
-    if (!sessionToken) return;
+    if (!sessionToken) {
+      setError('Your session has expired. Please sign in again.');
+      return;
+    }
     if (!form.middlewareBaseUrl.trim() || !form.middlewareApiKey.trim() || !form.middlewareBankName.trim()) {
       setError('Middleware URL, API key and Bank name are required.');
       return;
@@ -43,7 +48,15 @@ export default function BankSettingsPage() {
         headers: { 'x-session-token': sessionToken, 'Content-Type': 'application/json' },
         body: JSON.stringify(form)
       });
-      if (!res.ok) throw new Error('Failed to save settings');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 401) {
+          logout();
+          router.push('/bank/login');
+          throw new Error('Unauthorized session. Please sign in again.');
+        }
+        throw new Error(data?.error || 'Failed to save settings');
+      }
       setIntegrationConfigured(!!form.middlewareApiKey);
       setSuccess('Middleware connectivity settings updated.');
     } catch (e: any) {
@@ -54,7 +67,10 @@ export default function BankSettingsPage() {
   };
 
   const onTestConnection = async () => {
-    if (!sessionToken) return;
+    if (!sessionToken) {
+      setError('Your session has expired. Please sign in again.');
+      return;
+    }
     if (!form.middlewareBaseUrl.trim() || !form.middlewareApiKey.trim()) {
       setError('Middleware URL and API key are required to test connection.');
       return;
@@ -74,6 +90,12 @@ export default function BankSettingsPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        if (res.status === 401) {
+          logout();
+          router.push('/bank/login');
+          setError('Unauthorized session. Please sign in again.');
+          return;
+        }
         setError(data?.error || 'Connection test failed.');
         return;
       }

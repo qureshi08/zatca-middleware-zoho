@@ -173,6 +173,75 @@ function verifyPassword(password: string, hash: string) {
   return hashPassword(password) === hash;
 }
 
+function getSessionSecret() {
+  return (
+    process.env.BANK_SESSION_SECRET ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    'z3c-bank-demo-session-secret'
+  );
+}
+
+function toBase64Url(value: string) {
+  return Buffer.from(value, 'utf8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function fromBase64Url(value: string) {
+  const padded = value.replace(/-/g, '+').replace(/_/g, '/');
+  const missingPadding = padded.length % 4;
+  const normalized = missingPadding ? padded + '='.repeat(4 - missingPadding) : padded;
+  return Buffer.from(normalized, 'base64').toString('utf8');
+}
+
+function signSessionPayload(encodedPayload: string) {
+  return crypto
+    .createHmac('sha256', getSessionSecret())
+    .update(encodedPayload)
+    .digest('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function createSignedSessionToken(user: ProductUser, expiresAt: string) {
+  const payload = {
+    sub: user.id,
+    email: user.email,
+    role: user.role,
+    fullName: user.fullName,
+    exp: expiresAt,
+  };
+  const encodedPayload = toBase64Url(JSON.stringify(payload));
+  const signature = signSessionPayload(encodedPayload);
+  return `${encodedPayload}.${signature}`;
+}
+
+function readSignedSessionToken(token: string) {
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [encodedPayload, providedSignature] = parts;
+  const expectedSignature = signSessionPayload(encodedPayload);
+  if (providedSignature !== expectedSignature) return null;
+
+  try {
+    const parsed = JSON.parse(fromBase64Url(encodedPayload));
+    if (!parsed?.email || !parsed?.role || !parsed?.exp) return null;
+    if (new Date(parsed.exp).getTime() <= Date.now()) return null;
+    return parsed as {
+      sub?: string;
+      email: string;
+      role: Role;
+      fullName?: string;
+      exp: string;
+    };
+  } catch {
+    return null;
+  }
+}
+
 function getEmbeddedIntegrationConfig() {
   return {
     middlewareBaseUrl:
@@ -279,11 +348,12 @@ function pushAudit(
 /* ─── Auth ─── */
 
 function createSessionForUser(state: ProductState, user: ProductUser) {
+  const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
   const session: ProductSession = {
-    token: createId(),
+    token: createSignedSessionToken(user, expiresAt),
     userId: user.id,
     createdAt: nowIso(),
-    expiresAt: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
+    expiresAt,
   };
   state.sessions = state.sessions.filter((s) => s.userId !== user.id);
   state.sessions.unshift(session);
@@ -323,12 +393,37 @@ export async function authenticateAndCreateSession(email: string, password: stri
 }
 
 export async function getSessionUser(sessionToken: string) {
+  if (!sessionToken) return null;
   const state = await readState();
-  const session = state.sessions.find((s) => s.token === sessionToken && s.expiresAt > nowIso());
-  if (!session) return null;
-  const user = state.users.find((u) => u.id === session.userId && u.status === 'active');
-  if (!user) return null;
-  return { user, organization: state.organization, integration: state.integration };
+
+  // Backward compatibility for older in-memory-only sessions.
+  const inMemorySession = state.sessions.find((s) => s.token === sessionToken && s.expiresAt > nowIso());
+  if (inMemorySession) {
+    const user = state.users.find((u) => u.id === inMemorySession.userId && u.status === 'active');
+    if (user) return { user, organization: state.organization, integration: state.integration };
+  }
+
+  // Prefer stateless signed session tokens so auth survives serverless instance changes.
+  const tokenPayload = readSignedSessionToken(sessionToken);
+  if (!tokenPayload) return null;
+
+  const resolvedUser =
+    state.users.find((u) => u.id === tokenPayload.sub && u.status === 'active') ||
+    state.users.find((u) => u.email.toLowerCase() === tokenPayload.email.toLowerCase() && u.status === 'active') ||
+    ({
+      id: tokenPayload.sub || createId(),
+      fullName: tokenPayload.fullName || tokenPayload.email,
+      email: tokenPayload.email,
+      role: tokenPayload.role,
+      status: 'active',
+      passwordHash: '',
+      passwordHistory: [],
+      passwordChangedAt: nowIso(),
+      passwordExpiresAt: tokenPayload.exp,
+      createdAt: nowIso(),
+    } satisfies ProductUser);
+
+  return { user: resolvedUser, organization: state.organization, integration: state.integration };
 }
 
 export async function logoutSession(sessionToken: string) {
