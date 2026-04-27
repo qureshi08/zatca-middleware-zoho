@@ -45,36 +45,75 @@ export async function GET(req: NextRequest) {
         let totalVAT = 0;
 
         processedTransactions.forEach(t => {
-            // Extract totals from the original request body stored in response_payload
-            // Or from the response data itself
-            const payload = t.response_payload?.data || {};
-            const requestBody = t.response_payload?.body || {}; // If we log the body
+            const payload = t.response_payload?.data || t.response_payload || {};
+            const requestBody = t.response_payload?.body || {};
             
-            // Try to find total in various locations
-            const total = payload.total || requestBody.total || 0;
-            const vat = payload.vatAmount || requestBody.vatAmount || 0;
+            let total = parseFloat((payload.total || requestBody.total || 0).toString());
+            let vat = parseFloat((payload.vatAmount || requestBody.vatAmount || 0).toString());
             
-            totalSAR += parseFloat(total.toString() || '0');
-            totalVAT += parseFloat(vat.toString() || '0');
+            // Calculate from items if missing
+            if (total === 0 && (requestBody.items || payload.items)) {
+                const items = requestBody.items || payload.items || [];
+                items.forEach((item: any) => {
+                    const lineTotal = (item.quantity || 0) * (item.unitPrice || 0);
+                    const lineVat = lineTotal * ((item.vatRate || 15) / 100);
+                    total += lineTotal + lineVat;
+                    vat += lineVat;
+                });
+            }
+            
+            totalSAR += total;
+            totalVAT += vat;
         });
 
-        // If SAR is still 0, try to calculate from transaction metadata if available
-        if (totalSAR === 0) {
-            // Fallback to a secondary check if needed, but usually the payload has it
+        // 3. SECONDARY FALLBACK: If SAR is still 0 (due to old logs), query bank_invoices
+        if (totalSAR === 0 && processedTransactions.length > 0) {
+            const invNums = processedTransactions.map(t => t.invoice_number);
+            const { data: bankData } = await supabaseAdmin
+                .from('bank_invoices')
+                .select('invoice_number, total_amount, vat_amount')
+                .in('invoice_number', invNums);
+            
+            if (bankData) {
+                bankData.forEach(bi => {
+                    totalSAR += parseFloat((bi.total_amount || 0).toString());
+                    totalVAT += parseFloat((bi.vat_amount || 0).toString());
+                });
+            }
         }
 
         const successRate = submittedCount > 0 ? (processedCount / submittedCount) * 100 : 0;
 
-        // 3. Map transactions to a standard "Recent Activity" format for the dashboard
-        const recent = transactions?.slice(0, 5).map(t => {
-            const data = t.response_payload?.data || {};
+        // 4. Map transactions for the dashboard ledger
+        // We fetch bank_invoices for the recent list to get accurate volumes
+        const recentInvNums = transactions?.slice(0, 10).map(t => t.invoice_number) || [];
+        const { data: recentBankData } = await supabaseAdmin
+            .from('bank_invoices')
+            .select('invoice_number, total_amount')
+            .in('invoice_number', recentInvNums);
+
+        const recent = transactions?.slice(0, 10).map(t => {
+            const data = t.response_payload?.data || t.response_payload || {};
+            const requestBody = t.response_payload?.body || {};
+            const bankMatch = recentBankData?.find(b => b.invoice_number === t.invoice_number);
+            
+            let displayTotal = bankMatch?.total_amount || data.total || requestBody.total || 0;
+            
+            // Final calculation fallback
+            if (displayTotal === 0 && (requestBody.items || data.items)) {
+                const items = requestBody.items || data.items || [];
+                items.forEach((item: any) => {
+                    displayTotal += (item.quantity || 0) * (item.unitPrice || 0) * (1 + (item.vatRate || 15) / 100);
+                });
+            }
+
             return {
                 id: t.id,
                 invoice_number: t.invoice_number,
                 created_at: t.created_at,
                 status: (data.status || 'SUCCESS').toLowerCase(),
-                total_amount: data.total || 0,
-                payload: data
+                total_amount: parseFloat(displayTotal.toString()).toFixed(2),
+                payload: { ...data, total: displayTotal }
             };
         });
 
