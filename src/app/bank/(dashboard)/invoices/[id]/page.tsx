@@ -334,10 +334,12 @@ export default function BankInvoiceDetailPage() {
                  <CheckCircle2 size={32} className="text-emerald-500 mx-auto" />
                  <p className="text-[12px] font-black text-emerald-800 uppercase">Process Complete</p>
                  <p className="text-[10px] text-emerald-600">The invoice has been successfully submitted to ZATCA and archived.</p>
-                 <button className="btn-pro w-full bg-emerald-600 hover:bg-emerald-700 h-9 flex items-center justify-center gap-2">
-                    <ExternalLink size={14} />
-                    View Signed XML
-                 </button>
+                 {invoice.middlewareUuid && (
+                   <div className="mt-2 p-2 bg-white/60 rounded-lg border border-emerald-100/50">
+                     <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">ZATCA Reference</p>
+                     <p className="text-[11px] font-mono font-bold text-gray-700 break-all">{invoice.middlewareUuid}</p>
+                   </div>
+                 )}
               </div>
             ) : isEditing ? (
                <div className="animate-pro p-4 bg-white border border-blue-100 rounded-xl">

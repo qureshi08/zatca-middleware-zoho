@@ -136,7 +136,7 @@ export default function DashboardPage() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
             {[
               { label: 'INVOICES SUBMITTED', value: stats?.submittedCount || 0, color: 'text-blue-600' },
-              { label: 'INVOICES CLEARED', value: stats?.clearedCount || 0, color: 'text-green-600' },
+              { label: 'INVOICES PROCESSED', value: stats?.clearedCount || 0, color: 'text-green-600' },
               { label: 'CLEARANCE RATE', value: stats?.successRate || '0%', color: 'text-black' },
               { label: 'TOTAL FLOW', value: `SAR ${stats?.totalVolumeSAR || 0}`, color: 'text-purple-600' },
             ].map((stat, i) => (
