@@ -4,7 +4,7 @@ import { requireSession, listCustomers, createCustomer } from '@/lib/bank/produc
 export async function GET(req: NextRequest) {
   const session = await requireSession(req);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const customers = await listCustomers();
+  const customers = await listCustomers(session.organization.id);
   return NextResponse.json({ customers });
 }
 

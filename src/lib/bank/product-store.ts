@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { NextRequest } from 'next/server';
+import { supabaseAdmin } from '@/lib/supabase';
 
 /* ─── Types ─── */
 
@@ -21,6 +22,7 @@ export type InvoiceWorkflowStatus =
 
 export interface ProductUser {
   id: string;
+  organizationId?: string;
   fullName: string;
   email: string;
   role: Role;
@@ -209,6 +211,7 @@ function signSessionPayload(encodedPayload: string) {
 function createSignedSessionToken(user: ProductUser, expiresAt: string) {
   const payload = {
     sub: user.id,
+    orgId: user.organizationId || null,
     email: user.email,
     role: user.role,
     fullName: user.fullName,
@@ -232,6 +235,7 @@ function readSignedSessionToken(token: string) {
     if (new Date(parsed.exp).getTime() <= Date.now()) return null;
     return parsed as {
       sub?: string;
+      orgId?: string | null;
       email: string;
       role: Role;
       fullName?: string;
@@ -361,6 +365,72 @@ function createSessionForUser(state: ProductState, user: ProductUser) {
 }
 
 export async function authenticateAndCreateSession(email: string, password: string) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const passwordHash = hashPassword(password);
+
+  // Primary path: Supabase-backed bank user
+  const { data: bankUser } = await supabaseAdmin
+    .from('bank_users')
+    .select('id, organization_id, full_name, email, password_hash, role, user_status, password_expires_at')
+    .ilike('email', normalizedEmail)
+    .maybeSingle();
+
+  if (bankUser && bankUser.password_hash === passwordHash && (bankUser.user_status || 'active') === 'active') {
+    const { data: organization } = await supabaseAdmin
+      .from('organizations')
+      .select('id, name')
+      .eq('id', bankUser.organization_id)
+      .maybeSingle();
+
+    const { data: integration } = await supabaseAdmin
+      .from('bank_integration_settings')
+      .select('middleware_api_key')
+      .eq('organization_id', bankUser.organization_id)
+      .maybeSingle();
+
+    const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
+    const user: ProductUser = {
+      id: bankUser.id,
+      organizationId: bankUser.organization_id,
+      fullName: bankUser.full_name || bankUser.email,
+      email: bankUser.email,
+      role: (bankUser.role || 'Admin') as Role,
+      status: 'active',
+      passwordHash: bankUser.password_hash,
+      passwordHistory: [],
+      passwordChangedAt: nowIso(),
+      passwordExpiresAt: bankUser.password_expires_at || expiresAt,
+      createdAt: nowIso(),
+    };
+
+    const sessionToken = createSignedSessionToken(user, expiresAt);
+    await supabaseAdmin.from('bank_sessions').insert({
+      organization_id: bankUser.organization_id,
+      user_id: bankUser.id,
+      session_token: sessionToken,
+      expires_at: expiresAt,
+    });
+
+    return {
+      success: true as const,
+      sessionToken,
+      user: {
+        id: user.id,
+        fullName: user.fullName,
+        email: user.email,
+        role: user.role,
+        passwordExpiresAt: user.passwordExpiresAt,
+      },
+      organization: {
+        id: organization?.id || bankUser.organization_id,
+        name: organization?.name || 'Bank Organization',
+        passwordRotationDays: 14,
+      },
+      integrationConfigured: !!integration?.middleware_api_key,
+    };
+  }
+
+  // Fallback path: in-memory demo users
   return mutateState((state) => {
     const user = state.users.find((u) => u.email.toLowerCase() === email.toLowerCase());
     if (!user || user.status !== 'active' || !verifyPassword(password, user.passwordHash)) {
@@ -407,6 +477,57 @@ export async function getSessionUser(sessionToken: string) {
   const tokenPayload = readSignedSessionToken(sessionToken);
   if (!tokenPayload) return null;
 
+  if (tokenPayload.orgId) {
+    const { data: userRow } = await supabaseAdmin
+      .from('bank_users')
+      .select('id, organization_id, full_name, email, role, user_status, password_hash, password_expires_at, created_at')
+      .eq('organization_id', tokenPayload.orgId)
+      .eq('id', tokenPayload.sub || '')
+      .maybeSingle();
+
+    const { data: orgRow } = await supabaseAdmin
+      .from('organizations')
+      .select('id, name')
+      .eq('id', tokenPayload.orgId)
+      .maybeSingle();
+
+    const { data: integrationRow } = await supabaseAdmin
+      .from('bank_integration_settings')
+      .select('middleware_base_url, middleware_api_key, middleware_bank_name')
+      .eq('organization_id', tokenPayload.orgId)
+      .maybeSingle();
+
+    if (userRow && (userRow.user_status || 'active') === 'active') {
+      const dbUser: ProductUser = {
+        id: userRow.id,
+        organizationId: userRow.organization_id,
+        fullName: userRow.full_name || userRow.email,
+        email: userRow.email,
+        role: (userRow.role || tokenPayload.role || 'Admin') as Role,
+        status: 'active',
+        passwordHash: userRow.password_hash || '',
+        passwordHistory: [],
+        passwordChangedAt: nowIso(),
+        passwordExpiresAt: userRow.password_expires_at || tokenPayload.exp,
+        createdAt: userRow.created_at || nowIso(),
+      };
+
+      return {
+        user: dbUser,
+        organization: {
+          id: orgRow?.id || tokenPayload.orgId,
+          name: orgRow?.name || 'Bank Organization',
+          passwordRotationDays: 14,
+        },
+        integration: {
+          middlewareBaseUrl: integrationRow?.middleware_base_url || getEmbeddedIntegrationConfig().middlewareBaseUrl,
+          middlewareApiKey: integrationRow?.middleware_api_key || '',
+          middlewareBankName: integrationRow?.middleware_bank_name || '',
+        },
+      };
+    }
+  }
+
   const resolvedUser =
     state.users.find((u) => u.id === tokenPayload.sub && u.status === 'active') ||
     state.users.find((u) => u.email.toLowerCase() === tokenPayload.email.toLowerCase() && u.status === 'active') ||
@@ -427,6 +548,7 @@ export async function getSessionUser(sessionToken: string) {
 }
 
 export async function logoutSession(sessionToken: string) {
+  await supabaseAdmin.from('bank_sessions').delete().eq('session_token', sessionToken);
   await mutateState((state) => {
     state.sessions = state.sessions.filter((s) => s.token !== sessionToken);
   });
@@ -516,7 +638,21 @@ export async function createUser(
 
 /* ─── Integration Settings ─── */
 
-export async function getIntegrationSettings() {
+export async function getIntegrationSettings(organizationId?: string) {
+  if (organizationId) {
+    const { data } = await supabaseAdmin
+      .from('bank_integration_settings')
+      .select('middleware_base_url, middleware_api_key, middleware_bank_name')
+      .eq('organization_id', organizationId)
+      .maybeSingle();
+    const embedded = getEmbeddedIntegrationConfig();
+    return {
+      middlewareBaseUrl: data?.middleware_base_url || embedded.middlewareBaseUrl,
+      middlewareApiKey: data?.middleware_api_key || embedded.middlewareApiKey,
+      middlewareBankName: data?.middleware_bank_name || embedded.middlewareBankName,
+    };
+  }
+
   const state = await readState();
   const embedded = getEmbeddedIntegrationConfig();
   return {
@@ -530,6 +666,22 @@ export async function saveIntegrationSettings(
   actor: ProductUser,
   input: IntegrationSettings
 ) {
+  if (actor.organizationId) {
+    const { error } = await supabaseAdmin
+      .from('bank_integration_settings')
+      .upsert(
+        {
+          organization_id: actor.organizationId,
+          middleware_base_url: input.middlewareBaseUrl,
+          middleware_api_key: input.middlewareApiKey,
+          middleware_bank_name: input.middlewareBankName,
+        },
+        { onConflict: 'organization_id' }
+      );
+    if (error) return { success: false as const, error: error.message };
+    return { success: true as const, integration: input };
+  }
+
   return mutateState((state) => {
     state.integration = input;
     pushAudit(state, {
@@ -546,7 +698,29 @@ export async function saveIntegrationSettings(
 
 /* ─── Customers ─── */
 
-export async function listCustomers() {
+export async function listCustomers(organizationId?: string) {
+  if (organizationId) {
+    const { data } = await supabaseAdmin
+      .from('bank_customers')
+      .select('*')
+      .eq('organization_id', organizationId)
+      .order('created_at', { ascending: false });
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      customerCode: row.customer_code,
+      registrationName: row.registration_name,
+      vatNumber: row.vat_number,
+      identificationScheme: row.identification_scheme,
+      identificationNumber: row.identification_number,
+      email: row.email || '',
+      phone: row.phone || '',
+      address: row.address || {},
+      status: row.customer_status || 'active',
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
   const state = await readState();
   return state.customers;
 }
@@ -555,6 +729,40 @@ export async function createCustomer(
   actor: ProductUser,
   input: Omit<Customer, 'id' | 'createdAt' | 'updatedAt'>
 ): Promise<{ success: true; customer: Customer } | { success: false; error: string }> {
+  if (actor.organizationId) {
+    const payload = {
+      organization_id: actor.organizationId,
+      customer_code: input.customerCode,
+      registration_name: input.registrationName,
+      vat_number: input.vatNumber,
+      identification_scheme: input.identificationScheme,
+      identification_number: input.identificationNumber,
+      email: input.email,
+      phone: input.phone,
+      address: input.address,
+      customer_status: input.status,
+    };
+    const { data, error } = await supabaseAdmin.from('bank_customers').insert(payload).select('*').single();
+    if (error) return { success: false as const, error: error.message };
+    return {
+      success: true as const,
+      customer: {
+        id: data.id,
+        customerCode: data.customer_code,
+        registrationName: data.registration_name,
+        vatNumber: data.vat_number,
+        identificationScheme: data.identification_scheme,
+        identificationNumber: data.identification_number,
+        email: data.email || '',
+        phone: data.phone || '',
+        address: data.address || {},
+        status: data.customer_status || 'active',
+        createdAt: data.created_at,
+        updatedAt: data.updated_at,
+      },
+    };
+  }
+
   return mutateState((state) => {
     if (state.customers.some(c => c.customerCode === input.customerCode)) {
       return { success: false as const, error: 'Customer code already exists' };
@@ -589,12 +797,95 @@ function computeTotals(items: InvoiceItemInput[]) {
   };
 }
 
-export async function listInvoices() {
+export async function listInvoices(organizationId?: string) {
+  if (organizationId) {
+    const { data } = await supabaseAdmin
+      .from('bank_invoices')
+      .select('*')
+      .eq('organization_id', organizationId)
+      .order('created_at', { ascending: false });
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      invoiceNumber: row.invoice_number,
+      customerId: row.customer_id,
+      type: row.invoice_type,
+      documentType: row.document_type,
+      status: row.workflow_status,
+      totalAmount: Number(row.total_amount || 0),
+      vatAmount: Number(row.vat_amount || 0),
+      currency: row.currency || 'SAR',
+      items: row.items || [],
+      customerSnapshot: row.customer_snapshot || {},
+      createdByUserId: row.created_by_user_id,
+      currentAssigneeRole: row.current_assignee_role,
+      middlewareInvoiceId: row.middleware_invoice_id || undefined,
+      middlewareUuid: row.middleware_uuid || undefined,
+      middlewareStatus: row.middleware_status || undefined,
+      invoiceHash: row.invoice_hash || undefined,
+      qrCode: row.qr_code || undefined,
+      signedXml: row.signed_xml || undefined,
+      validationMessages: row.validation_messages || [],
+      lastComment: row.last_comment || undefined,
+      workflowComments: [],
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
   const state = await readState();
   return state.invoices;
 }
 
-export async function getInvoiceById(id: string) {
+export async function getInvoiceById(id: string, organizationId?: string) {
+  if (organizationId) {
+    const { data } = await supabaseAdmin
+      .from('bank_invoices')
+      .select('*')
+      .eq('id', id)
+      .eq('organization_id', organizationId)
+      .maybeSingle();
+    if (!data) return null;
+    const { data: comments } = await supabaseAdmin
+      .from('bank_invoice_comments')
+      .select('*')
+      .eq('invoice_id', id)
+      .order('created_at', { ascending: true });
+    return {
+      id: data.id,
+      invoiceNumber: data.invoice_number,
+      customerId: data.customer_id,
+      type: data.invoice_type,
+      documentType: data.document_type,
+      status: data.workflow_status,
+      totalAmount: Number(data.total_amount || 0),
+      vatAmount: Number(data.vat_amount || 0),
+      currency: data.currency || 'SAR',
+      items: data.items || [],
+      customerSnapshot: data.customer_snapshot || {},
+      createdByUserId: data.created_by_user_id,
+      currentAssigneeRole: data.current_assignee_role,
+      middlewareInvoiceId: data.middleware_invoice_id || undefined,
+      middlewareUuid: data.middleware_uuid || undefined,
+      middlewareStatus: data.middleware_status || undefined,
+      invoiceHash: data.invoice_hash || undefined,
+      qrCode: data.qr_code || undefined,
+      signedXml: data.signed_xml || undefined,
+      validationMessages: data.validation_messages || [],
+      lastComment: data.last_comment || undefined,
+      workflowComments: (comments || []).map((c: any) => ({
+        id: c.id,
+        invoiceId: c.invoice_id,
+        byUserId: c.by_user_id,
+        byRole: c.by_role,
+        byName: c.by_name,
+        comment: c.comment,
+        createdAt: c.created_at,
+      })),
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
+
   const state = await readState();
   return state.invoices.find((inv) => inv.id === id) || null;
 }
@@ -610,6 +901,83 @@ export async function createInvoiceDraft(
     items: InvoiceItemInput[];
   }
 ) {
+  if (actor.organizationId) {
+    const { data: customerRow } = await supabaseAdmin
+      .from('bank_customers')
+      .select('*')
+      .eq('id', input.customerId)
+      .eq('organization_id', actor.organizationId)
+      .eq('customer_status', 'active')
+      .maybeSingle();
+    if (!customerRow) return { success: false as const, error: 'Customer not found or inactive' };
+
+    const { data: existingInvoice } = await supabaseAdmin
+      .from('bank_invoices')
+      .select('id')
+      .eq('organization_id', actor.organizationId)
+      .eq('invoice_number', input.invoiceNumber)
+      .maybeSingle();
+    if (existingInvoice) return { success: false as const, error: 'Invoice number already exists' };
+
+    const totals = computeTotals(input.items);
+    const customerSnapshot = {
+      id: customerRow.id,
+      customerCode: customerRow.customer_code,
+      registrationName: customerRow.registration_name,
+      vatNumber: customerRow.vat_number,
+      identificationScheme: customerRow.identification_scheme,
+      identificationNumber: customerRow.identification_number,
+      email: customerRow.email || '',
+      phone: customerRow.phone || '',
+      address: customerRow.address || {},
+      status: customerRow.customer_status || 'active',
+      createdAt: customerRow.created_at,
+      updatedAt: customerRow.updated_at,
+    };
+
+    const { data, error } = await supabaseAdmin
+      .from('bank_invoices')
+      .insert({
+        organization_id: actor.organizationId,
+        invoice_number: input.invoiceNumber,
+        customer_id: input.customerId,
+        invoice_type: input.type,
+        document_type: input.documentType,
+        workflow_status: 'draft',
+        total_amount: totals.totalAmount,
+        vat_amount: totals.vatAmount,
+        currency: input.currency,
+        items: input.items,
+        customer_snapshot: customerSnapshot,
+        created_by_user_id: actor.id,
+        current_assignee_role: 'Maker',
+      })
+      .select('*')
+      .single();
+    if (error) return { success: false as const, error: error.message };
+    return {
+      success: true as const,
+      invoice: {
+        id: data.id,
+        invoiceNumber: data.invoice_number,
+        customerId: data.customer_id,
+        type: data.invoice_type,
+        documentType: data.document_type,
+        status: data.workflow_status,
+        totalAmount: Number(data.total_amount || 0),
+        vatAmount: Number(data.vat_amount || 0),
+        currency: data.currency || 'SAR',
+        items: data.items || [],
+        customerSnapshot: data.customer_snapshot || {},
+        createdByUserId: data.created_by_user_id,
+        currentAssigneeRole: data.current_assignee_role,
+        workflowComments: [],
+        createdAt: data.created_at,
+        updatedAt: data.updated_at,
+      },
+    };
+  }
+
   return mutateState((state) => {
     const customer = state.customers.find((c) => c.id === input.customerId && c.status === 'active');
     if (!customer) return { success: false as const, error: 'Customer not found or inactive' };
@@ -667,6 +1035,94 @@ export async function updateInvoiceDraft(
     items?: InvoiceItemInput[];
   }
 ) {
+  if (actor.organizationId) {
+    const { data: invoice } = await supabaseAdmin
+      .from('bank_invoices')
+      .select('*')
+      .eq('id', invoiceId)
+      .eq('organization_id', actor.organizationId)
+      .maybeSingle();
+    if (!invoice) return { success: false as const, error: 'Invoice not found' };
+    if (invoice.created_by_user_id !== actor.id && actor.role !== 'Admin') {
+      return { success: false as const, error: 'Only the creator or Admin can edit this invoice' };
+    }
+    if (!['draft', 'returned_by_checker', 'returned_by_approver'].includes(invoice.workflow_status)) {
+      return { success: false as const, error: 'Only draft or returned invoices can be edited' };
+    }
+
+    let customerSnapshot = invoice.customer_snapshot;
+    let customerId = invoice.customer_id;
+    if (input.customerId) {
+      const { data: customer } = await supabaseAdmin
+        .from('bank_customers')
+        .select('*')
+        .eq('id', input.customerId)
+        .eq('organization_id', actor.organizationId)
+        .eq('customer_status', 'active')
+        .maybeSingle();
+      if (!customer) return { success: false as const, error: 'Customer not found or inactive' };
+      customerId = customer.id;
+      customerSnapshot = {
+        id: customer.id,
+        customerCode: customer.customer_code,
+        registrationName: customer.registration_name,
+        vatNumber: customer.vat_number,
+        identificationScheme: customer.identification_scheme,
+        identificationNumber: customer.identification_number,
+        email: customer.email || '',
+        phone: customer.phone || '',
+        address: customer.address || {},
+        status: customer.customer_status || 'active',
+        createdAt: customer.created_at,
+        updatedAt: customer.updated_at,
+      };
+    }
+
+    const nextItems = input.items || invoice.items || [];
+    const totals = computeTotals(nextItems);
+    const updates: Record<string, unknown> = {
+      customer_id: customerId,
+      customer_snapshot: customerSnapshot,
+      invoice_type: input.type || invoice.invoice_type,
+      document_type: input.documentType || invoice.document_type,
+      currency: input.currency || invoice.currency,
+      items: nextItems,
+      total_amount: totals.totalAmount,
+      vat_amount: totals.vatAmount,
+      updated_at: nowIso(),
+    };
+
+    const { data: updated, error } = await supabaseAdmin
+      .from('bank_invoices')
+      .update(updates)
+      .eq('id', invoiceId)
+      .eq('organization_id', actor.organizationId)
+      .select('*')
+      .single();
+    if (error) return { success: false as const, error: error.message };
+    return {
+      success: true as const,
+      invoice: {
+        id: updated.id,
+        invoiceNumber: updated.invoice_number,
+        customerId: updated.customer_id,
+        type: updated.invoice_type,
+        documentType: updated.document_type,
+        status: updated.workflow_status,
+        totalAmount: Number(updated.total_amount || 0),
+        vatAmount: Number(updated.vat_amount || 0),
+        currency: updated.currency || 'SAR',
+        items: updated.items || [],
+        customerSnapshot: updated.customer_snapshot || {},
+        createdByUserId: updated.created_by_user_id,
+        currentAssigneeRole: updated.current_assignee_role,
+        workflowComments: [],
+        createdAt: updated.created_at,
+        updatedAt: updated.updated_at,
+      },
+    };
+  }
+
   return mutateState((state) => {
     const invoice = state.invoices.find((inv) => inv.id === invoiceId);
     if (!invoice) return { success: false as const, error: 'Invoice not found' };
@@ -727,6 +1183,115 @@ export async function transitionInvoice(
     | 'approver_approve',
   comment?: string
 ) {
+  if (actor.organizationId) {
+    const { data: invoice } = await supabaseAdmin
+      .from('bank_invoices')
+      .select('*')
+      .eq('id', invoiceId)
+      .eq('organization_id', actor.organizationId)
+      .maybeSingle();
+    if (!invoice) return { success: false as const, error: 'Invoice not found' };
+
+    const transitions: Record<string, {
+      allowedRoles: Role[];
+      from: InvoiceWorkflowStatus[];
+      to: InvoiceWorkflowStatus;
+      nextAssignee: Role | null;
+    }> = {
+      submit_for_check: {
+        allowedRoles: ['Maker', 'Admin'],
+        from: ['draft', 'returned_by_checker', 'returned_by_approver'],
+        to: 'submitted_for_check',
+        nextAssignee: 'Checker',
+      },
+      checker_return: {
+        allowedRoles: ['Checker', 'Admin'],
+        from: ['submitted_for_check'],
+        to: 'returned_by_checker',
+        nextAssignee: 'Maker',
+      },
+      checker_accept: {
+        allowedRoles: ['Checker', 'Admin'],
+        from: ['submitted_for_check'],
+        to: 'checked',
+        nextAssignee: 'Approver',
+      },
+      approver_return: {
+        allowedRoles: ['Approver', 'Admin'],
+        from: ['checked'],
+        to: 'returned_by_approver',
+        nextAssignee: 'Maker',
+      },
+      approver_approve: {
+        allowedRoles: ['Approver', 'Admin'],
+        from: ['checked'],
+        to: 'approved_for_submission',
+        nextAssignee: 'Approver',
+      },
+    };
+
+    const spec = transitions[action];
+    if (!spec) return { success: false as const, error: 'Unknown action' };
+    if (!spec.allowedRoles.includes(actor.role) || !spec.from.includes(invoice.workflow_status)) {
+      return { success: false as const, error: 'Transition not allowed for current role or status' };
+    }
+
+    const { data: updated, error } = await supabaseAdmin
+      .from('bank_invoices')
+      .update({
+        workflow_status: spec.to,
+        current_assignee_role: spec.nextAssignee,
+        last_comment: comment || null,
+        updated_at: nowIso(),
+      })
+      .eq('id', invoiceId)
+      .eq('organization_id', actor.organizationId)
+      .select('*')
+      .single();
+    if (error) return { success: false as const, error: error.message };
+
+    if (comment) {
+      await supabaseAdmin.from('bank_invoice_comments').insert({
+        organization_id: actor.organizationId,
+        invoice_id: invoiceId,
+        by_user_id: actor.id,
+        by_role: actor.role,
+        by_name: actor.fullName,
+        comment,
+      });
+    }
+    await supabaseAdmin.from('bank_invoice_workflow_events').insert({
+      organization_id: actor.organizationId,
+      invoice_id: invoiceId,
+      action,
+      by_user_id: actor.id,
+      by_role: actor.role,
+      comment: comment || null,
+    });
+
+    return {
+      success: true as const,
+      invoice: {
+        id: updated.id,
+        invoiceNumber: updated.invoice_number,
+        customerId: updated.customer_id,
+        type: updated.invoice_type,
+        documentType: updated.document_type,
+        status: updated.workflow_status,
+        totalAmount: Number(updated.total_amount || 0),
+        vatAmount: Number(updated.vat_amount || 0),
+        currency: updated.currency || 'SAR',
+        items: updated.items || [],
+        customerSnapshot: updated.customer_snapshot || {},
+        createdByUserId: updated.created_by_user_id,
+        currentAssigneeRole: updated.current_assignee_role,
+        workflowComments: [],
+        createdAt: updated.created_at,
+        updatedAt: updated.updated_at,
+      },
+    };
+  }
+
   return mutateState((state) => {
     const invoice = state.invoices.find((inv) => inv.id === invoiceId);
     if (!invoice) return { success: false as const, error: 'Invoice not found' };
@@ -823,6 +1388,53 @@ export async function addWorkflowComment(
   invoiceId: string,
   comment: string
 ) {
+  if (actor.organizationId) {
+    const { data: invoice } = await supabaseAdmin
+      .from('bank_invoices')
+      .select('*')
+      .eq('id', invoiceId)
+      .eq('organization_id', actor.organizationId)
+      .maybeSingle();
+    if (!invoice) return { success: false as const, error: 'Invoice not found' };
+
+    await supabaseAdmin.from('bank_invoice_comments').insert({
+      organization_id: actor.organizationId,
+      invoice_id: invoiceId,
+      by_user_id: actor.id,
+      by_role: actor.role,
+      by_name: actor.fullName,
+      comment,
+    });
+    const { data: updated } = await supabaseAdmin
+      .from('bank_invoices')
+      .update({ last_comment: comment, updated_at: nowIso() })
+      .eq('id', invoiceId)
+      .eq('organization_id', actor.organizationId)
+      .select('*')
+      .single();
+    return {
+      success: true as const,
+      invoice: {
+        id: updated.id,
+        invoiceNumber: updated.invoice_number,
+        customerId: updated.customer_id,
+        type: updated.invoice_type,
+        documentType: updated.document_type,
+        status: updated.workflow_status,
+        totalAmount: Number(updated.total_amount || 0),
+        vatAmount: Number(updated.vat_amount || 0),
+        currency: updated.currency || 'SAR',
+        items: updated.items || [],
+        customerSnapshot: updated.customer_snapshot || {},
+        createdByUserId: updated.created_by_user_id,
+        currentAssigneeRole: updated.current_assignee_role,
+        workflowComments: [],
+        createdAt: updated.created_at,
+        updatedAt: updated.updated_at,
+      },
+    };
+  }
+
   return mutateState((state) => {
     const invoice = state.invoices.find((inv) => inv.id === invoiceId);
     if (!invoice) return { success: false as const, error: 'Invoice not found' };
@@ -844,6 +1456,137 @@ export async function addWorkflowComment(
 /* ─── Submit to Middleware (Internal) ─── */
 
 export async function submitInvoiceToMiddleware(actor: ProductUser, invoiceId: string) {
+  if (actor.organizationId) {
+    const { data: invoice } = await supabaseAdmin
+      .from('bank_invoices')
+      .select('*')
+      .eq('id', invoiceId)
+      .eq('organization_id', actor.organizationId)
+      .maybeSingle();
+    if (!invoice) return { success: false as const, error: 'Invoice not found' };
+    if (!(actor.role === 'Approver' || actor.role === 'Admin')) {
+      return { success: false as const, error: 'Only approvers or admins can submit to middleware' };
+    }
+    if (invoice.workflow_status !== 'approved_for_submission') {
+      return { success: false as const, error: 'Invoice must be approved before submission' };
+    }
+
+    const { data: integration } = await supabaseAdmin
+      .from('bank_integration_settings')
+      .select('middleware_base_url, middleware_api_key')
+      .eq('organization_id', actor.organizationId)
+      .maybeSingle();
+    const baseUrl = (integration?.middleware_base_url || '').replace(/\/$/, '');
+    const apiKey = (integration?.middleware_api_key || '').trim();
+    if (!baseUrl) return { success: false as const, error: 'Middleware base URL is not configured. Ask Admin to configure integration settings.' };
+    if (!apiKey) return { success: false as const, error: 'Middleware API key is missing. Ask Admin to configure integration settings.' };
+
+    await supabaseAdmin
+      .from('bank_invoices')
+      .update({ workflow_status: 'submitted_to_middleware', updated_at: nowIso() })
+      .eq('id', invoiceId)
+      .eq('organization_id', actor.organizationId);
+
+    const payload = {
+      type: invoice.invoice_type,
+      documentType: invoice.document_type,
+      invoiceId: invoice.invoice_number,
+      buyer: {
+        partyIdentification: invoice.customer_snapshot?.identificationNumber
+          ? {
+              schemeID: invoice.customer_snapshot.identificationScheme,
+              id: invoice.customer_snapshot.identificationNumber,
+            }
+          : undefined,
+        postalAddress: invoice.customer_snapshot?.address,
+        partyTaxScheme: invoice.customer_snapshot?.vatNumber
+          ? { companyID: invoice.customer_snapshot.vatNumber }
+          : undefined,
+        partyLegalEntity: {
+          registrationName: invoice.customer_snapshot?.registrationName,
+        },
+      },
+      items: invoice.items || [],
+    };
+
+    let response: Response;
+    let data: any;
+    try {
+      response = await fetch(`${baseUrl}/api/v1/zatca/invoices/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
+        body: JSON.stringify(payload),
+      });
+      data = await response.json().catch(() => ({}));
+    } catch (err: any) {
+      await supabaseAdmin
+        .from('bank_invoices')
+        .update({
+          workflow_status: 'failed_submission',
+          current_assignee_role: 'Approver',
+          updated_at: nowIso(),
+        })
+        .eq('id', invoiceId)
+        .eq('organization_id', actor.organizationId);
+      return { success: false as const, error: `Middleware unreachable: ${err?.message}` };
+    }
+
+    const success = response.ok && data?.success;
+    const nextStatus = success
+      ? (data.zatcaStatus === 'REPORTED' ? 'reported' : 'cleared')
+      : (data?.zatcaStatus === 'REJECTED' ? 'rejected' : 'failed_submission');
+    const nextAssignee = success ? null : 'Approver';
+
+    const { data: updated } = await supabaseAdmin
+      .from('bank_invoices')
+      .update({
+        workflow_status: nextStatus,
+        current_assignee_role: nextAssignee,
+        middleware_status: data?.zatcaStatus || null,
+        middleware_invoice_id: data?.invoiceId || null,
+        middleware_uuid: data?.uuid || null,
+        invoice_hash: data?.invoiceHash || null,
+        qr_code: data?.qrCode || null,
+        signed_xml: data?.signedXml || null,
+        validation_messages: data?.validationMessages || [],
+        updated_at: nowIso(),
+      })
+      .eq('id', invoiceId)
+      .eq('organization_id', actor.organizationId)
+      .select('*')
+      .single();
+
+    const invoiceResult = {
+      id: updated.id,
+      invoiceNumber: updated.invoice_number,
+      customerId: updated.customer_id,
+      type: updated.invoice_type,
+      documentType: updated.document_type,
+      status: updated.workflow_status,
+      totalAmount: Number(updated.total_amount || 0),
+      vatAmount: Number(updated.vat_amount || 0),
+      currency: updated.currency || 'SAR',
+      items: updated.items || [],
+      customerSnapshot: updated.customer_snapshot || {},
+      createdByUserId: updated.created_by_user_id,
+      currentAssigneeRole: updated.current_assignee_role,
+      middlewareInvoiceId: updated.middleware_invoice_id || undefined,
+      middlewareUuid: updated.middleware_uuid || undefined,
+      middlewareStatus: updated.middleware_status || undefined,
+      invoiceHash: updated.invoice_hash || undefined,
+      qrCode: updated.qr_code || undefined,
+      signedXml: updated.signed_xml || undefined,
+      validationMessages: updated.validation_messages || [],
+      workflowComments: [],
+      createdAt: updated.created_at,
+      updatedAt: updated.updated_at,
+    };
+
+    return success
+      ? { success: true as const, invoice: invoiceResult, middlewareResponse: data }
+      : { success: false as const, error: data?.error || 'Submission failed', invoice: invoiceResult, middlewareResponse: data };
+  }
+
   const state = await readState();
   const invoice = state.invoices.find((inv) => inv.id === invoiceId);
   if (!invoice) return { success: false as const, error: 'Invoice not found' };
@@ -982,7 +1725,54 @@ export async function submitInvoiceToMiddleware(actor: ProductUser, invoiceId: s
 
 /* ─── Dashboard ─── */
 
-export async function getDashboardSummary() {
+export async function getDashboardSummary(organizationId?: string) {
+  if (organizationId) {
+    const { data: invoices } = await supabaseAdmin
+      .from('bank_invoices')
+      .select('*')
+      .eq('organization_id', organizationId);
+    const { data: customers } = await supabaseAdmin
+      .from('bank_customers')
+      .select('id')
+      .eq('organization_id', organizationId);
+    const { data: users } = await supabaseAdmin
+      .from('bank_users')
+      .select('id')
+      .eq('organization_id', organizationId);
+    const { data: integration } = await supabaseAdmin
+      .from('bank_integration_settings')
+      .select('middleware_api_key')
+      .eq('organization_id', organizationId)
+      .maybeSingle();
+
+    const allInvoices = invoices || [];
+    return {
+      organization: { id: organizationId, name: 'Bank Organization', passwordRotationDays: 14 },
+      users: users?.length || 0,
+      customers: customers?.length || 0,
+      integrationConfigured: !!integration?.middleware_api_key,
+      invoiceSummary: {
+        total: allInvoices.length,
+        drafts: allInvoices.filter((inv: any) => inv.workflow_status === 'draft').length,
+        pendingReview: allInvoices.filter((inv: any) =>
+          ['submitted_for_check', 'checked', 'approved_for_submission', 'submitted_to_middleware'].includes(inv.workflow_status)
+        ).length,
+        cleared: allInvoices.filter((inv: any) => inv.workflow_status === 'cleared').length,
+        reported: allInvoices.filter((inv: any) => inv.workflow_status === 'reported').length,
+        rejected: allInvoices.filter((inv: any) => ['rejected', 'failed_submission'].includes(inv.workflow_status)).length,
+        totalVolumeSAR: allInvoices.reduce((sum: number, inv: any) => sum + Number(inv.total_amount || 0), 0).toFixed(2),
+      },
+      recentInvoices: allInvoices.slice(0, 5).map((row: any) => ({
+        id: row.id,
+        invoiceNumber: row.invoice_number,
+        status: row.workflow_status,
+        totalAmount: Number(row.total_amount || 0),
+        createdAt: row.created_at,
+      })),
+      recentAuditLogs: [],
+    };
+  }
+
   const state = await readState();
   const invoices = state.invoices;
   return {

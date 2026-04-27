@@ -9,7 +9,7 @@ export async function GET(
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
-  const invoice = await getInvoiceById(id);
+  const invoice = await getInvoiceById(id, session.organization.id);
   if (!invoice) return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
   return NextResponse.json({ invoice });
 }

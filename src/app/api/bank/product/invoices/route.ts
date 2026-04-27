@@ -4,7 +4,7 @@ import { requireSession, createInvoiceDraft, listInvoices } from '@/lib/bank/pro
 export async function GET(req: NextRequest) {
   const session = await requireSession(req);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const invoices = await listInvoices();
+  const invoices = await listInvoices(session.organization.id);
   return NextResponse.json({ invoices });
 }
 

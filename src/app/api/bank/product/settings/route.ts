@@ -4,7 +4,7 @@ import { requireSession, getIntegrationSettings, saveIntegrationSettings } from 
 export async function GET(req: NextRequest) {
   const session = await requireSession(req, ['Admin']);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const integration = await getIntegrationSettings();
+  const integration = await getIntegrationSettings(session.organization.id);
   return NextResponse.json({ integration });
 }
 
