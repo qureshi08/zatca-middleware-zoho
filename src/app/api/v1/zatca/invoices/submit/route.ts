@@ -55,11 +55,69 @@ export async function POST(req: NextRequest) {
             invoice_number: body.invoiceId,
             invoice_hash: result.success ? (result.data?.hash || result.data?.uuid) : null,
             status: result.success ? 'success' : 'failure',
-            response_payload: result
+            response_payload: {
+                ...result,
+                body: body // Store original request for dashboard SAR/VAT calculation
+            }
         });
 
         if (logError) {
             console.error(`[ZATCA-DB-LOG] CRITICAL ERROR for ${body.invoiceId}:`, logError.message);
+        }
+
+        // 5. Persist to invoices table so middleware dashboard can display it
+        if (result.success && result.data) {
+            const invoiceStatus = result.data.status === 'CLEARED' ? 'cleared' : 
+                                  result.data.status === 'REPORTED' ? 'reported' : 'cleared';
+            
+            // Calculate totals from items
+            const items = body.items || [];
+            const subtotal = items.reduce((acc: number, item: any) => acc + (item.quantity * item.unitPrice), 0);
+            const vatTotal = items.reduce((acc: number, item: any) => acc + (item.quantity * item.unitPrice * (item.vatRate || 15) / 100), 0);
+
+            // Use UPSERT to ensure we don't fail on retries and all columns are populated
+            const { error: invoiceError } = await supabaseAdmin.from('invoices').upsert({
+                organization_id: organization.id,
+                invoice_number: body.invoiceId,
+                invoice_type: body.type,
+                document_type: body.documentType || '388',
+                status: invoiceStatus,
+                total_amount: subtotal + vatTotal,
+                zatca_status: result.data.status,
+                zatca_uuid: result.data.uuid,
+                qr_code: result.data.qrCode,
+                xml: result.data.xml,
+                payload: {
+                    ...body,
+                    total: subtotal + vatTotal,
+                    vatAmount: vatTotal,
+                    subtotal,
+                    uuid: result.data.uuid,
+                    hash: result.data.hash,
+                    zatcaStatus: result.data.status,
+                    qrCode: result.data.qrCode,
+                    xml: result.data.xml,
+                },
+            }, { 
+                onConflict: 'organization_id, invoice_number' 
+            });
+
+            if (invoiceError) {
+                console.error(`[ZATCA-INVOICE-PERSIST] CRITICAL Error for ${body.invoiceId}:`, invoiceError.message, invoiceError.code);
+                
+                // Fallback: If upsert failed due to missing constraint, try simple insert
+                if (invoiceError.code === '42703' || invoiceError.code === '42P10') {
+                     await supabaseAdmin.from('invoices').insert({
+                        organization_id: organization.id,
+                        invoice_number: body.invoiceId,
+                        invoice_type: body.type,
+                        document_type: body.documentType || '388',
+                        status: invoiceStatus,
+                        total_amount: subtotal + vatTotal,
+                        payload: { ...body, total: subtotal + vatTotal }
+                     });
+                }
+            }
         }
 
         if (!result.success) {

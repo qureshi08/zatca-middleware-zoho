@@ -58,7 +58,12 @@ export async function POST(req: NextRequest) {
                 organization_id: org.id,
                 email: email,
                 password_hash: passwordHash,
-                full_name: `${bankName} Administrator`
+                full_name: `${bankName} Administrator`,
+                role: 'Admin',
+                user_status: 'active',
+                password_history: [passwordHash],
+                password_changed_at: new Date().toISOString(),
+                password_expires_at: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
             });
 
         if (userError) {

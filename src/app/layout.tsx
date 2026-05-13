@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
-// Sidebar removed for enterprise-only mode – no Bank UI
+import Sidebar from '@/components/Sidebar';
 import { AppProvider } from '@/context/AppContext';
 import { getOnboardingStatus } from '@/lib/zatca/onboarding-storage';
 
@@ -25,9 +25,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body suppressHydrationWarning>
         <AppProvider>
           <div className="app-shell">
-            <main className="w-full">
+            <Sidebar mode={mode} />
+            <div className="main-content">
               {children}
-            </main>
+            </div>
           </div>
         </AppProvider>
       </body>

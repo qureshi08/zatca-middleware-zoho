@@ -2,110 +2,87 @@
 
 import React, { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Settings, Link, CheckCircle2, XCircle, RefreshCw, LogOut } from 'lucide-react';
-import { useApp } from '@/context/AppContext';
+import { Settings, Link, CheckCircle2, XCircle, RefreshCw, LogOut, Info } from 'lucide-react';
 
 function QuickbooksSettingsContent() {
-  const {
-    qbClientId, setQbClientId,
-    qbClientSecret, setQbClientSecret,
-    qbRealmId, setQbRealmId,
-    qbAccessToken, setQbAccessToken,
-    qbRefreshToken, setQbRefreshToken,
-    qbTokenExpiresAt, setQbTokenExpiresAt,
-    qbConnected, setQbConnected
-  } = useApp();
+  const [clientId, setClientId] = useState('');
+  const [clientSecret, setClientSecret] = useState('');
+  const [realmId, setRealmId] = useState('');
+  const [isConnected, setIsConnected] = useState(false);
+  const [expiresAt, setExpiresAt] = useState<number | null>(null);
+  const [orgId, setOrgId] = useState<string | null>(null);
 
   const searchParams = useSearchParams();
   const [msg, setMsg] = useState<{ type: 'success' | 'error', text: string } | null>(null);
-  const [testing, setTesting] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  // Handle OAuth redirect code
+  // 1. Initial Load: Fetch existing config from DB
   useEffect(() => {
-    const code = searchParams.get('code');
-    if (code && !qbConnected) {
-      exchangeCodeForTokens(code);
-    }
+    // We assume the user's orgId is either in a cookie or we fetch a default for now
+    // In production, this would come from the session
+    const fetchConfig = async () => {
+        setLoading(true);
+        try {
+            // Fetch default organization for this demo
+            const orgResp = await fetch('/api/v1/zatca/summary');
+            const orgData = await orgResp.json();
+            const id = orgData.organizations?.[0]?.id;
+            if (id) {
+                setOrgId(id);
+                const res = await fetch(`/api/quickbooks/config?orgId=${id}`);
+                const data = await res.json();
+                if (data.config) {
+                    setClientId(data.config.client_id || '');
+                    setClientSecret(data.config.client_secret || '');
+                    setRealmId(data.config.realm_id || '');
+                    setIsConnected(data.config.is_connected);
+                    setExpiresAt(data.config.token_expires_at);
+                }
+            }
+        } catch (e) {
+            console.error('Failed to load config');
+        } finally {
+            setLoading(false);
+        }
+    };
+    fetchConfig();
+
+    // Check for success/error messages in URL from OAuth redirect
+    const success = searchParams.get('success');
+    const error = searchParams.get('error');
+    if (success) setMsg({ type: 'success', text: 'QuickBooks successfully connected!' });
+    if (error) setMsg({ type: 'error', text: error });
   }, [searchParams]);
 
-  const exchangeCodeForTokens = async (code: string) => {
-    setTesting(true);
+  const saveConfig = async () => {
+    if (!orgId) return;
+    setLoading(true);
     try {
-      const redirectUri = `${window.location.origin}/api/quickbooks/oauth/callback`;
-      const authHeader = btoa(`${qbClientId}:${qbClientSecret}`);
-      
-      const resp = await fetch('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Basic ${authHeader}`,
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: new URLSearchParams({
-          grant_type: 'authorization_code',
-          code,
-          redirect_uri: redirectUri,
-        }),
-      });
-
-      if (!resp.ok) {
-        const err = await resp.json();
-        throw new Error(err.error_description || 'Token exchange failed');
-      }
-
-      const data = await resp.json();
-      setQbAccessToken(data.access_token);
-      setQbRefreshToken(data.refresh_token);
-      setQbTokenExpiresAt(Date.now() + data.expires_in * 1000);
-      setQbConnected(true);
-      setMsg({ type: 'success', text: 'QuickBooks connected successfully!' });
-      
-      // Clean URL
-      window.history.replaceState({}, '', window.location.pathname);
+        const res = await fetch('/api/quickbooks/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orgId, clientId, clientSecret, realmId })
+        });
+        if (!res.ok) throw new Error('Failed to save configuration');
+        setMsg({ type: 'success', text: 'Configuration saved. You can now connect.' });
     } catch (e: any) {
-      setMsg({ type: 'error', text: e.message });
+        setMsg({ type: 'error', text: e.message });
     } finally {
-      setTesting(false);
+        setLoading(false);
     }
   };
 
-  const startOAuth = () => {
-    if (!qbClientId || !qbClientSecret) {
+  const startOAuth = async () => {
+    if (!clientId || !clientSecret) {
       setMsg({ type: 'error', text: 'Please enter Client ID and Secret first.' });
       return;
     }
+    // Ensure config is saved first
+    await saveConfig();
+    
     const redirectUri = encodeURIComponent(`${window.location.origin}/api/quickbooks/oauth/callback`);
-    const url = `https://appcenter.intuit.com/connect/oauth2?client_id=${qbClientId}&redirect_uri=${redirectUri}&response_type=code&scope=com.intuit.quickbooks.accounting&state=quickbooks_oauth`;
+    const url = `https://appcenter.intuit.com/connect/oauth2?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=com.intuit.quickbooks.accounting&state=quickbooks_oauth`;
     window.location.href = url;
-  };
-
-  const testConnection = async () => {
-    setTesting(true);
-    setMsg(null);
-    try {
-      const resp = await fetch('/api/quickbooks/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accessToken: qbAccessToken, realmId: qbRealmId }),
-      });
-      const data = await resp.json();
-      if (data.ok) {
-        setMsg({ type: 'success', text: 'Connection is active and working!' });
-      } else {
-        throw new Error(data.error || 'Connection test failed');
-      }
-    } catch (e: any) {
-      setMsg({ type: 'error', text: e.message });
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  const disconnect = () => {
-    setQbAccessToken('');
-    setQbRefreshToken('');
-    setQbTokenExpiresAt(0);
-    setQbConnected(false);
-    setMsg({ type: 'success', text: 'Disconnected from QuickBooks.' });
   };
 
   return (
@@ -114,11 +91,11 @@ function QuickbooksSettingsContent() {
         <div>
           <h1 className="text-3xl font-bold text-slate-900 flex items-center gap-3">
             <Settings className="text-blue-600" size={32} />
-            QuickBooks Integration
+            Enterprise QuickBooks Integration
           </h1>
-          <p className="text-slate-500 mt-2">Configure your QuickBooks Online connection for automated ZATCA compliance.</p>
+          <p className="text-slate-500 mt-2">Connect your QuickBooks Online account to synchronize invoices with ZATCA.</p>
         </div>
-        {qbConnected ? (
+        {isConnected ? (
           <div className="flex items-center gap-2 px-4 py-2 bg-green-50 text-green-700 rounded-full border border-green-200 font-medium">
             <CheckCircle2 size={18} />
             Connected
@@ -146,8 +123,8 @@ function QuickbooksSettingsContent() {
                 type="text"
                 className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                 placeholder="Enter Intuit Client ID"
-                value={qbClientId}
-                onChange={(e) => setQbClientId(e.target.value)}
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
               />
             </div>
             <div>
@@ -156,41 +133,39 @@ function QuickbooksSettingsContent() {
                 type="password"
                 className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                 placeholder="Enter Intuit Client Secret"
-                value={qbClientSecret}
-                onChange={(e) => setQbClientSecret(e.target.value)}
+                value={clientSecret}
+                onChange={(e) => setClientSecret(e.target.value)}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Company Realm ID</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Company Realm ID (Optional)</label>
               <input
                 type="text"
                 className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                 placeholder="Enter QuickBooks Realm ID"
-                value={qbRealmId}
-                onChange={(e) => setQbRealmId(e.target.value)}
+                value={realmId}
+                onChange={(e) => setRealmId(e.target.value)}
               />
+              <p className="text-[10px] text-slate-400 mt-1">If left blank, it will be captured during connection.</p>
             </div>
           </div>
 
-          <div className="pt-4">
-            {!qbConnected ? (
+          <div className="pt-4 flex gap-3">
+             <button
+                onClick={saveConfig}
+                disabled={loading}
+                className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold transition-all"
+              >
+                Save Draft
+              </button>
               <button
                 onClick={startOAuth}
-                disabled={testing}
-                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-200 disabled:opacity-50"
+                disabled={loading}
+                className="flex-2 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-200 disabled:opacity-50"
               >
-                {testing ? <RefreshCw className="animate-spin" /> : <Link size={18} />}
-                Connect to QuickBooks
+                {loading ? <RefreshCw className="animate-spin" /> : <Link size={18} />}
+                Connect & Authorize
               </button>
-            ) : (
-              <button
-                onClick={disconnect}
-                className="w-full py-3 bg-white hover:bg-red-50 text-red-600 border border-red-200 rounded-xl font-semibold flex items-center justify-center gap-2 transition-all"
-              >
-                <LogOut size={18} />
-                Disconnect Integration
-              </button>
-            )}
           </div>
         </div>
 
@@ -203,33 +178,24 @@ function QuickbooksSettingsContent() {
 
           <div className="space-y-4">
             <div className="flex justify-between items-center py-2 border-b border-slate-100">
-              <span className="text-slate-500">OAuth Status</span>
-              <span className={qbConnected ? "text-green-600 font-medium" : "text-slate-400"}>
-                {qbConnected ? "Active" : "Inactive"}
+              <span className="text-slate-500">Connection</span>
+              <span className={isConnected ? "text-green-600 font-medium" : "text-slate-400"}>
+                {isConnected ? "Active" : "Not Configured"}
               </span>
             </div>
             <div className="flex justify-between items-center py-2 border-b border-slate-100">
-              <span className="text-slate-500">Token Expiry</span>
-              <span className="text-slate-700 font-mono text-sm">
-                {qbTokenExpiresAt > 0 ? new Date(qbTokenExpiresAt).toLocaleString() : 'N/A'}
+              <span className="text-slate-500">Last Sync</span>
+              <span className="text-slate-700 font-medium">
+                {expiresAt ? new Date(expiresAt).toLocaleDateString() : 'Never'}
               </span>
             </div>
-            <div className="flex justify-between items-center py-2 border-b border-slate-100">
-              <span className="text-slate-500">Webhook Sync</span>
-              <span className="text-blue-600 font-medium">Automatic</span>
+            <div className="bg-blue-100/50 p-3 rounded-xl flex gap-3">
+                <Info size={18} className="text-blue-600 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-blue-800 leading-relaxed">
+                    Once connected, the Middleware will automatically poll for new invoices every hour or receive them via Webhooks.
+                </p>
             </div>
           </div>
-
-          {qbConnected && (
-            <button
-              onClick={testConnection}
-              disabled={testing}
-              className="w-full py-3 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50"
-            >
-              {testing ? <RefreshCw className="animate-spin" /> : <RefreshCw size={18} />}
-              Test API Connection
-            </button>
-          )}
 
           {msg && (
             <div className={`p-4 rounded-xl border ${
@@ -243,14 +209,25 @@ function QuickbooksSettingsContent() {
       </div>
 
       {/* Guide Section */}
-      <div className="bg-blue-50 border border-blue-100 rounded-2xl p-6">
-        <h3 className="text-blue-800 font-semibold mb-2">Setup Instructions</h3>
-        <ul className="text-sm text-blue-700 space-y-2 list-disc list-inside">
-          <li>Create an application in the <a href="https://developer.intuit.com" target="_blank" className="underline font-medium">Intuit Developer Portal</a>.</li>
-          <li>Set your Redirect URI to: <code className="bg-blue-100 px-2 py-0.5 rounded font-mono text-xs">{typeof window !== 'undefined' ? `${window.location.origin}/api/quickbooks/oauth/callback` : '.../api/quickbooks/oauth/callback'}</code></li>
-          <li>Copy the Client ID and Secret into the fields above.</li>
-          <li>Configure your Webhook URL to point to <code className="bg-blue-100 px-2 py-0.5 rounded font-mono text-xs">{typeof window !== 'undefined' ? `${window.location.origin}/api/quickbooks/webhook` : '.../api/quickbooks/webhook'}</code> for real-time sync.</li>
-        </ul>
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-white">
+        <h3 className="text-xl font-bold mb-4">How to Integrate</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="space-y-2">
+                <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center font-bold">1</div>
+                <h4 className="font-semibold">Developer Portal</h4>
+                <p className="text-[12px] text-slate-400">Create an app at developer.intuit.com and copy your Client Keys.</p>
+            </div>
+            <div className="space-y-2">
+                <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center font-bold">2</div>
+                <h4 className="font-semibold">Whitelist URL</h4>
+                <p className="text-[12px] text-slate-400">Add the Redirect URI to your Intuit App settings to allow the handshake.</p>
+            </div>
+            <div className="space-y-2">
+                <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center font-bold">3</div>
+                <h4 className="font-semibold">Connect</h4>
+                <p className="text-[12px] text-slate-400">Paste the keys here and click Connect. Your invoices will start syncing.</p>
+            </div>
+        </div>
       </div>
     </div>
   );

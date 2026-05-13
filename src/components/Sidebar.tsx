@@ -89,7 +89,7 @@ export default function Sidebar({ mode: _unused }: { mode: string }) {
                         <p className="text-[13px] font-bold text-gray-900 truncate">{activeBank?.name || 'Loading Node...'}</p>
                     </div>
 
-                    <nav className="flex-1 space-y-8">
+                    <nav className="flex-1 space-y-6 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 280px)' }}>
                         <div>
                             <div className="nav-label">Protocol Nexus</div>
                             <Link href="/" className={`nav-item${isActive('/') ? ' active' : ''}`}>{Icon.grid} Dashboard</Link>
@@ -105,6 +105,14 @@ export default function Sidebar({ mode: _unused }: { mode: string }) {
                         <div>
                             <div className="nav-label">Audit Logs</div>
                             <Link href="/invoices" className={`nav-item${isActive('/invoices') ? ' active' : ''}`}>{Icon.list} Transaction Feed</Link>
+                        </div>
+
+                        <div>
+                            <div className="nav-label">Enterprise Sync</div>
+                            <Link href="/admin/quickbooks/settings" className={`nav-item${isActive('/admin/quickbooks/settings') ? ' active' : ''}`}>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 20A7 7 0 0 1 11 6a7 7 0 0 1 7 7M11 20a7 7 0 0 0 7-7M11 20l-4 4M18 13l4-4" /></svg>
+                                QuickBooks Online
+                            </Link>
                         </div>
                     </nav>
                 </>
