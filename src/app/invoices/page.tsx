@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useApp } from '@/context/AppContext';
 
 function getDocType(inv: any): { label: string; pillClass: string } {
     if (inv.documentType === '381' || inv.xml?.includes('InvoiceTypeCode>381'))
@@ -20,14 +22,21 @@ function getStatus(inv: any): { label: string; pillClass: string } {
 }
 
 export default function InvoicesPage() {
+    const router = useRouter();
+    const { activeBank, isLoading: contextLoading } = useApp();
     const [invoices, setInvoices] = useState<any[]>([]);
     const [filter, setFilter] = useState('ALL');
     const [search, setSearch] = useState('');
 
     useEffect(() => {
+        if (contextLoading) return;
+        if (!activeBank) {
+            router.push('/login');
+            return;
+        }
         const stored = JSON.parse(localStorage.getItem('invoices') || '[]');
         setInvoices(stored.reverse());
-    }, []);
+    }, [contextLoading, activeBank, router]);
 
     const filtered = invoices
         .filter(inv => {

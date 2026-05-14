@@ -2,17 +2,26 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { runComplianceChecks } from '@/lib/zatca/onboarding'; // We can reuse the action
 import { getOnboardingStatus } from '@/lib/zatca/onboarding-storage';
+import { useApp } from '@/context/AppContext';
 
 export default function CompliancePage() {
+    const router = useRouter();
+    const { activeBank, isLoading: contextLoading } = useApp();
     const [loading, setLoading] = useState(false);
     const [results, setResults] = useState<any[]>([]);
     const [status, setStatus] = useState<any>(null);
 
     useEffect(() => {
+        if (contextLoading) return;
+        if (!activeBank) {
+            router.push('/login');
+            return;
+        }
         checkPrerequisites();
-    }, []);
+    }, [contextLoading, activeBank, router]);
 
     const checkPrerequisites = async () => {
         const s = await getOnboardingStatus();

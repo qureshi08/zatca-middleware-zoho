@@ -2,8 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useApp } from '@/context/AppContext';
 
 export default function AdminPage() {
+    const router = useRouter();
+    const { activeBank, isLoading: contextLoading } = useApp();
     const [name, setName] = useState('');
     const [taxNumber, setTaxNumber] = useState('');
     const [vatNumber, setVatNumber] = useState('');
@@ -13,8 +17,13 @@ export default function AdminPage() {
     const [banks, setBanks] = useState<any[]>([]);
 
     useEffect(() => {
+        if (contextLoading) return;
+        if (!activeBank) {
+            router.push('/login');
+            return;
+        }
         fetchBanks();
-    }, []);
+    }, [contextLoading, activeBank, router]);
 
     const fetchBanks = async () => {
         try {

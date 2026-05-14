@@ -1,43 +1,43 @@
 'use client';
 
 import React, { useEffect, useState, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Settings, Link, CheckCircle2, XCircle, RefreshCw, LogOut, Info } from 'lucide-react';
+import { useApp } from '@/context/AppContext';
 
 function QuickbooksSettingsContent() {
+  const router = useRouter();
+  const { activeBank, isLoading: contextLoading } = useApp();
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
   const [realmId, setRealmId] = useState('');
   const [isConnected, setIsConnected] = useState(false);
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
-  const [orgId, setOrgId] = useState<string | null>(null);
+  const orgId = activeBank?.id ?? null;
 
   const searchParams = useSearchParams();
   const [msg, setMsg] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // 1. Initial Load: Fetch existing config from DB
+  // 1. Initial Load: Fetch existing config from DB for the active institutional node
   useEffect(() => {
-    // We assume the user's orgId is either in a cookie or we fetch a default for now
-    // In production, this would come from the session
+    if (contextLoading) return;
+    if (!activeBank) {
+        router.push('/login');
+        return;
+    }
+
     const fetchConfig = async () => {
         setLoading(true);
         try {
-            // Fetch default organization for this demo
-            const orgResp = await fetch('/api/v1/zatca/summary');
-            const orgData = await orgResp.json();
-            const id = orgData.organizations?.[0]?.id;
-            if (id) {
-                setOrgId(id);
-                const res = await fetch(`/api/quickbooks/config?orgId=${id}`);
-                const data = await res.json();
-                if (data.config) {
-                    setClientId(data.config.client_id || '');
-                    setClientSecret(data.config.client_secret || '');
-                    setRealmId(data.config.realm_id || '');
-                    setIsConnected(data.config.is_connected);
-                    setExpiresAt(data.config.token_expires_at);
-                }
+            const res = await fetch(`/api/quickbooks/config?orgId=${activeBank.id}`);
+            const data = await res.json();
+            if (data.config) {
+                setClientId(data.config.client_id || '');
+                setClientSecret(data.config.client_secret || '');
+                setRealmId(data.config.realm_id || '');
+                setIsConnected(data.config.is_connected);
+                setExpiresAt(data.config.token_expires_at);
             }
         } catch (e) {
             console.error('Failed to load config');
@@ -52,7 +52,7 @@ function QuickbooksSettingsContent() {
     const error = searchParams.get('error');
     if (success) setMsg({ type: 'success', text: 'QuickBooks successfully connected!' });
     if (error) setMsg({ type: 'error', text: error });
-  }, [searchParams]);
+  }, [contextLoading, activeBank, router, searchParams]);
 
   const saveConfig = async () => {
     if (!orgId) return;

@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useApp } from '@/context/AppContext';
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useBankAuthStore } from '@/store/bankAuthStore';
 
 const Icon = {
     grid: (
@@ -59,7 +60,22 @@ export default function Sidebar({ mode: _unused }: { mode: string }) {
     }, [activeBank, setActiveBank, apiKey, setApiKey]);
 
     const handleLogout = async () => {
-        await supabase.auth.signOut();
+        // Clear AppContext (also clears z3c_active_bank / z3c_api_key from localStorage)
+        setActiveBank(null);
+        setApiKey(null);
+
+        // Clear bank-side persisted session (zustand z3c-bank-demo-auth)
+        try { useBankAuthStore.getState().logout(); } catch { }
+
+        // Clear stray client-only invoice cache used by /invoices
+        try { localStorage.removeItem('invoices'); } catch { }
+
+        // Clear Supabase session if any
+        try { await supabase.auth.signOut(); } catch { }
+
+        // Drop synthesized user so UI flips to logged-out state before redirect
+        setUser(null);
+
         window.location.href = '/login';
     };
 
