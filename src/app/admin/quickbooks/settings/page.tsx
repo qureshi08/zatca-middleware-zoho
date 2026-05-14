@@ -77,12 +77,29 @@ function QuickbooksSettingsContent() {
       setMsg({ type: 'error', text: 'Please enter Client ID and Secret first.' });
       return;
     }
-    // Ensure config is saved first
+    if (!orgId) {
+      setMsg({ type: 'error', text: 'Organization context is missing. Please sign in again.' });
+      return;
+    }
+    // Ensure config is saved first so the server has client_id/secret to use.
     await saveConfig();
-    
-    const redirectUri = encodeURIComponent(`${window.location.origin}/api/quickbooks/oauth/callback`);
-    const url = `https://appcenter.intuit.com/connect/oauth2?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=com.intuit.quickbooks.accounting&state=quickbooks_oauth`;
-    window.location.href = url;
+
+    setLoading(true);
+    try {
+      const res = await fetch('/api/quickbooks/oauth/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orgId }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.url) {
+        throw new Error(data.error || 'Failed to initiate QuickBooks OAuth');
+      }
+      window.location.href = data.url;
+    } catch (e: any) {
+      setMsg({ type: 'error', text: e.message });
+      setLoading(false);
+    }
   };
 
   return (
