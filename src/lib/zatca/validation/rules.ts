@@ -342,7 +342,7 @@ function validateSeller(xml: string, push: (m: ValidationMessage) => void) {
       status: 'ERROR',
       message: 'Seller VAT identifier (BT-31) is missing.',
     });
-  } else if (!/^3\d{13}03$/.test(sellerVat)) {
+  } else if (!/^3\d{12}03$/.test(sellerVat)) {
     push({
       code: 'BR-KSA-39',
       category: 'KSA',
@@ -460,7 +460,7 @@ function validateBuyer(
         status: 'ERROR',
         message: 'Standard invoices require a buyer VAT number or other identifier.',
       });
-    } else if (buyerVat && !/^3\d{13}03$/.test(buyerVat)) {
+    } else if (buyerVat && !/^3\d{12}03$/.test(buyerVat)) {
       push({
         code: 'BR-KSA-39',
         category: 'KSA',
