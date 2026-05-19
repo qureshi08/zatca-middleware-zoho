@@ -225,7 +225,7 @@ export async function POST(req: NextRequest) {
             try {
                 if (result.success && result.data) {
                     await odoo.writebackStatus(Number(odooInvoiceId), {
-                        status: result.data.status === 'CLEARED' ? 'cleared' : 'submitted',
+                        status: (result.data.status === 'CLEARED' || result.data.status === 'REPORTED') ? 'cleared' : 'submitted',
                         uuid: result.data.uuid,
                         qrCode: result.data.qrCode,
                         xml: result.data.xml

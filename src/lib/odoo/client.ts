@@ -176,6 +176,7 @@ export class OdooClient {
             { name: 'x_zatca_qr_code', field_description: 'ZATCA QR Code (Base64)', ttype: 'text' },
             { name: 'x_zatca_xml', field_description: 'ZATCA Signed XML', ttype: 'text' },
             { name: 'x_zatca_error', field_description: 'ZATCA Last Error', ttype: 'text' },
+            { name: 'x_zatca_document_type', field_description: 'ZATCA Document Type', ttype: 'selection', selection: "[('388','Tax Invoice'),('381','Credit Note'),('383','Debit Note')]" },
         ];
 
         const created: string[] = [];
@@ -238,11 +239,30 @@ export class OdooClient {
      * Pulls an invoice from Odoo and maps it to SimpleInvoiceInput
      */
     async getInvoice(invoiceId: number): Promise<any> {
-        const fields = [
+        // Dynamically inspect model fields to see what exists in this Odoo DB instance
+        let fieldsMeta: Record<string, any> = {};
+        try {
+            fieldsMeta = await this.execute('account.move', 'fields_get', [
+                [],
+                ['type']
+            ]);
+        } catch (e: any) {
+            console.warn('[Odoo] Failed to fetch field metadata:', e.message);
+        }
+
+        const baseFields = [
             'name', 'date', 'amount_total', 'amount_untaxed', 'amount_tax',
             'move_type', 'partner_id', 'invoice_line_ids', 'currency_id',
             'x_zatca_status'
         ];
+
+        // Check and append optional compliance fields dynamically
+        const fields = [...baseFields];
+        for (const f of ['x_zatca_document_type', 'reversed_entry_id', 'ref', 'invoice_origin']) {
+            if (fieldsMeta && fieldsMeta[f]) {
+                fields.push(f);
+            }
+        }
         
         const moves = await this.execute('account.move', 'read', [
             [invoiceId],
@@ -317,7 +337,18 @@ export class OdooClient {
         // Odoo B2C invoices typically don't have a VAT number on the customer, or are standard retail sales
         const isB2B = !!buyer.vat;
         const type = isB2B ? 'standard' : 'simplified';
-        const documentType = move.move_type === 'out_refund' ? '381' : '388'; // Credit note vs Invoice
+        
+        // Determine document type (388 = Invoice, 381 = Credit Note, 383 = Debit Note)
+        let documentType = '388';
+        if (move.x_zatca_document_type) {
+            documentType = move.x_zatca_document_type;
+        } else if (move.move_type === 'out_refund') {
+            documentType = '381';
+        } else {
+            documentType = '388';
+        }
+
+        const isAdjustment = documentType === '381' || documentType === '383';
 
         return {
             type,
@@ -333,7 +364,11 @@ export class OdooClient {
                 country: countryCode
             } : undefined,
             items,
-            odooRaw: move
+            odooRaw: move,
+            ...(isAdjustment && {
+                originalInvoiceId: (move.reversed_entry_id && move.reversed_entry_id[1]) || move.invoice_origin || 'INV-0000',
+                creditReason: move.ref || move.invoice_origin || 'Adjustment Note'
+            })
         };
     }
 
