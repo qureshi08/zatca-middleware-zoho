@@ -2,13 +2,40 @@ import { jsPDF } from 'jspdf';
 
 /**
  * Z3C MIDDLEWARE: INSTITUTIONAL-GRADE PDF ENGINE (A4)
- * Hardened for Production - v3.0
+ * Hardened for Server-Side Production - v4.0
+ * 
+ * Uses raw PNG byte arrays for image embedding to avoid
+ * data-URL parsing failures in Node.js (no DOM).
  */
 
 interface PDFInput {
     invoice: any;
     qrCode: string;
     hash?: string;
+}
+
+/**
+ * Extract raw PNG bytes from a data URL or base64 string.
+ * Returns a Uint8Array that jsPDF can reliably embed server-side.
+ */
+function extractPngBytes(dataUrlOrBase64: string): Uint8Array | null {
+    try {
+        let raw = dataUrlOrBase64;
+        // Strip data-URL prefix if present
+        const commaIdx = raw.indexOf(',');
+        if (commaIdx !== -1) {
+            raw = raw.substring(commaIdx + 1);
+        }
+        const buf = Buffer.from(raw, 'base64');
+        // Sanity: first 4 bytes of PNG are 0x89 0x50 0x4E 0x47
+        if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) {
+            return new Uint8Array(buf);
+        }
+        console.warn('[PDF] QR image is not a valid PNG, skipping embed.');
+        return null;
+    } catch {
+        return null;
+    }
 }
 
 export async function generateInvoicePDF(data: PDFInput): Promise<Buffer> {
@@ -39,13 +66,15 @@ export async function generateInvoicePDF(data: PDFInput): Promise<Buffer> {
         doc.text('Institutional Compliance - ZATCA Phase 2', m, 32);
 
         // Clearance Badge
-        if (data.invoice.status === 'cleared') {
+        const isClearedOrReported = data.invoice.status === 'cleared' || data.invoice.status === 'reported';
+        if (isClearedOrReported) {
             doc.setFillColor(240, 255, 240);
             doc.roundedRect(pw - m - 30, 18, 30, 8, 2, 2, 'F');
             doc.setFont('helvetica', 'bold');
             doc.setFontSize(8);
             doc.setTextColor(50, 150, 50);
-            doc.text('CLEARED', pw - m - 15, 23, { align: 'center' });
+            const badge = data.invoice.status === 'cleared' ? 'CLEARED' : 'REPORTED';
+            doc.text(badge, pw - m - 15, 23, { align: 'center' });
         }
 
         // --- 2. IDENTITY BLOCKS ---
@@ -84,20 +113,20 @@ export async function generateInvoicePDF(data: PDFInput): Promise<Buffer> {
         doc.setTextColor(100);
         doc.text(`VAT ID: ${p.buyer?.partyTaxScheme?.companyID || 'UNREGISTERED'}`, m, y + 11);
 
-        // --- 3. QR HUB (SAFETY WRAPPED) ---
+        // --- 3. QR CODE (Server-Safe: raw PNG bytes) ---
         if (data.qrCode) {
             try {
                 const qrSize = 45;
                 const qrx = pw - m - qrSize;
                 const qry = y - 5;
 
-                // Ensure Base64 prefix
-                let qrImage = data.qrCode;
-                if (!qrImage.startsWith('data:image')) {
-                    qrImage = `data:image/png;base64,${qrImage}`;
+                const pngBytes = extractPngBytes(data.qrCode);
+                if (pngBytes) {
+                    // Pass raw Uint8Array with explicit format – reliable in Node.js
+                    doc.addImage(pngBytes, 'PNG', qrx, qry, qrSize, qrSize);
+                } else {
+                    console.warn('[PDF-QR] Skipped QR embed – invalid PNG data.');
                 }
-
-                doc.addImage(qrImage, 'PNG', qrx, qry, qrSize, qrSize);
             } catch (qrErr) {
                 console.warn('[PDF-QR-WARN]: QR failed to render, skipping image.');
             }
@@ -144,7 +173,9 @@ export async function generateInvoicePDF(data: PDFInput): Promise<Buffer> {
         doc.text(`UUID: ${data.invoice.id} | Hash: ${data.hash || 'N/A'}`, m, 280);
         doc.text('Certified Electronic Invoice (ZATCA Middleware Node)', m, 284);
 
-        return Buffer.from(doc.output('arraybuffer'));
+        // Use binary string output – most reliable for Node.js Buffer conversion
+        const binaryStr = doc.output();
+        return Buffer.from(binaryStr, 'latin1');
     } catch (fullError: any) {
         console.error('[CRITICAL-PDF-FATAL]:', fullError.message);
         throw new Error(`PDF Reconstruction Failed: ${fullError.message}`);

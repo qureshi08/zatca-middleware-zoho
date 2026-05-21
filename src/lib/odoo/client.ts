@@ -420,7 +420,7 @@ export class OdooClient {
         ]);
 
         // Attach signed XML and compliance PDF directly to the invoice record in Odoo
-        if (data.status === 'cleared' && (data.pdfBase64 || data.xmlBase64)) {
+        if ((data.status === 'cleared' || data.status === 'submitted') && (data.pdfBase64 || data.xmlBase64)) {
             try {
                 // Find existing attachments for this invoice to prevent duplicates
                 const existingAttachments = await this.execute('ir.attachment', 'search', [

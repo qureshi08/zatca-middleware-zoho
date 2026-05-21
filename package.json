@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test:invoice": "tsx src/lib/zatca/test-complete.ts",
-    "git:push": "git add -A && git commit -m \"feat: odoo integration to attach signed XML and compliance PDF to invoice\" && git push"
+    "git:push": "git add -A && git commit -m \"fix: corrupted PDF - use raw PNG bytes for server-side jsPDF and fix attachment condition\" && git push"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.100.1",
