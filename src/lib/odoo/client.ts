@@ -263,7 +263,7 @@ export class OdooClient {
 
         // Check and append optional compliance fields dynamically
         const fields = [...baseFields];
-        for (const f of ['x_zatca_document_type', 'reversed_entry_id', 'ref', 'invoice_origin']) {
+        for (const f of ['x_zatca_document_type', 'reversed_entry_id', 'debit_origin_id', 'ref', 'invoice_origin']) {
             if (fieldsMeta && fieldsMeta[f]) {
                 fields.push(f);
             }
@@ -344,13 +344,21 @@ export class OdooClient {
         const type = isB2B ? 'standard' : 'simplified';
         
         // Determine document type (388 = Invoice, 381 = Credit Note, 383 = Debit Note)
+        // Priority: explicit override > native Odoo links (debit_origin_id / reversed_entry_id /
+        // move_type) > ref string heuristics.
         let documentType = '388';
         const refLower = (move.ref || '').toLowerCase();
-        
+        const hasDebitOrigin = Array.isArray(move.debit_origin_id) && move.debit_origin_id.length > 0;
+
         if (move.x_zatca_document_type) {
             documentType = move.x_zatca_document_type;
         } else if (move.move_type === 'out_refund') {
             documentType = '381';
+        } else if (hasDebitOrigin) {
+            // Odoo's native "Debit Note" button (account_debit_note module) sets debit_origin_id
+            // on a new out_invoice pointing at the original invoice. This is the authoritative
+            // signal — locale-independent, unlike the ref string.
+            documentType = '383';
         } else if (refLower.includes('debit note') || refLower.includes('debit of')) {
             documentType = '383';
         } else {
@@ -362,7 +370,9 @@ export class OdooClient {
         // Extract original invoice ID for adjustment references
         let originalInvoiceId = '';
         if (isAdjustment) {
-            if (move.reversed_entry_id && move.reversed_entry_id[1]) {
+            if (hasDebitOrigin && move.debit_origin_id[1]) {
+                originalInvoiceId = move.debit_origin_id[1];
+            } else if (move.reversed_entry_id && move.reversed_entry_id[1]) {
                 originalInvoiceId = move.reversed_entry_id[1];
             } else if (move.ref) {
                 // Remove prefixes like "Reversal of:", "Debit Note of:", or "Debit of:"
