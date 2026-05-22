@@ -440,6 +440,8 @@ export class OdooClient {
             error?: string;
             pdfBase64?: string;
             xmlBase64?: string;
+            documentType?: string;
+            originalInvoiceId?: string;
         }
     ): Promise<boolean> {
         console.log(`[Odoo] Writing back status ${data.status} for Odoo invoice ID ${invoiceId}...`);
@@ -515,8 +517,15 @@ export class OdooClient {
 
         // Post a message in the Odoo chatter/activity log
         try {
-            const message = data.status === 'cleared' 
-                ? `🚀 <b>ZATCA Compliance: Invoice Cleared successfully!</b><br/>UUID: ${data.uuid}<br/>PDF and XML have been generated and attached.`
+            const docTypeLabel =
+                data.documentType === '381' ? 'Credit Note (381)' :
+                data.documentType === '383' ? 'Debit Note (383)' :
+                'Tax Invoice (388)';
+            const linkedLine = data.originalInvoiceId
+                ? `<br/>🔗 Linked to original: <b>${data.originalInvoiceId}</b>`
+                : '';
+            const message = data.status === 'cleared' || data.status === 'submitted'
+                ? `🚀 <b>ZATCA Compliance: ${docTypeLabel} ${data.status === 'cleared' ? 'Cleared' : 'Reported'} successfully!</b><br/>UUID: ${data.uuid}${linkedLine}<br/>PDF and XML have been generated and attached.`
                 : `❌ <b>ZATCA Compliance: Submission Failed</b><br/>Error: ${data.error}`;
             
             await this.execute('mail.message', 'create', [{

@@ -251,6 +251,8 @@ export default function DashboardPage() {
                 <thead className="bg-[#fbfbfd] border-b border-gray-100">
                   <tr>
                     <th className="px-6 py-4 text-[11px] font-black uppercase tracking-widest text-gray-400">Reference No</th>
+                    <th className="px-6 py-4 text-[11px] font-black uppercase tracking-widest text-gray-400">Type</th>
+                    <th className="px-6 py-4 text-[11px] font-black uppercase tracking-widest text-gray-400">Linked To</th>
                     <th className="px-6 py-4 text-[11px] font-black uppercase tracking-widest text-gray-400">Timestamp</th>
                     <th className="px-6 py-4 text-[11px] font-black uppercase tracking-widest text-gray-400">Volume</th>
                     <th className="px-6 py-4 text-[11px] font-black uppercase tracking-widest text-gray-400">Status</th>
@@ -260,9 +262,27 @@ export default function DashboardPage() {
                 <tbody className="divide-y divide-gray-50">
                   {(stats?.recent || []).map((row: any) => {
                     const displayTotal = row.total_amount || row.payload?.total || 0;
+                    const docType = row.document_type || '388';
+                    const isB2C = row.invoice_type === 'simplified';
+                    const typeLabel =
+                      docType === '381' ? 'Credit Note' :
+                      docType === '383' ? 'Debit Note' :
+                      isB2C ? 'Simplified Invoice' : 'Tax Invoice';
+                    const typeClass =
+                      docType === '381' ? 'bg-red-100 text-red-700' :
+                      docType === '383' ? 'bg-blue-100 text-blue-700' :
+                      'bg-gray-100 text-gray-700';
                     return (
                       <tr key={row.id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-6 py-4 font-black text-[13px]">{row.invoice_number}</td>
+                        <td className="px-6 py-4">
+                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-widest ${typeClass}`}>
+                            {typeLabel} ({docType})
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-[12px] font-mono text-gray-500">
+                          {row.original_invoice_id || <span className="text-gray-300">—</span>}
+                        </td>
                         <td className="px-6 py-4 text-[12px] text-gray-400 font-medium">
                           {new Date(row.created_at).toLocaleString()}
                         </td>
@@ -284,7 +304,7 @@ export default function DashboardPage() {
                   })}
                   {(stats?.recent?.length === 0) && (
                     <tr>
-                      <td colSpan={5} className="px-6 py-12 text-center text-gray-300 italic text-[13px]">No transactions detected in recent registry.</td>
+                      <td colSpan={7} className="px-6 py-12 text-center text-gray-300 italic text-[13px]">No transactions detected in recent registry.</td>
                     </tr>
                   )}
                 </tbody>

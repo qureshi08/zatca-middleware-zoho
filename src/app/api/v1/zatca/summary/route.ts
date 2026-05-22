@@ -96,9 +96,9 @@ export async function GET(req: NextRequest) {
             const data = t.response_payload?.data || t.response_payload || {};
             const requestBody = t.response_payload?.body || {};
             const bankMatch = recentBankData?.find(b => b.invoice_number === t.invoice_number);
-            
+
             let displayTotal = bankMatch?.total_amount || data.total || requestBody.total || 0;
-            
+
             // Final calculation fallback
             if (displayTotal === 0 && (requestBody.items || data.items)) {
                 const items = requestBody.items || data.items || [];
@@ -107,12 +107,21 @@ export async function GET(req: NextRequest) {
                 });
             }
 
+            // Surface the document type & linked original invoice so the dashboard ledger
+            // can show at a glance that the middleware detected this as a credit/debit note.
+            const documentType = requestBody.documentType || data.documentType || '388';
+            const originalInvoiceId = requestBody.originalInvoiceId || data.originalInvoiceId || null;
+            const invoiceType = requestBody.type || data.type || 'standard';
+
             return {
                 id: t.id,
                 invoice_number: t.invoice_number,
                 created_at: t.created_at,
                 status: (data.status || 'SUCCESS').toLowerCase(),
                 total_amount: parseFloat(displayTotal.toString()).toFixed(2),
+                document_type: documentType,
+                invoice_type: invoiceType,
+                original_invoice_id: originalInvoiceId,
                 payload: { ...data, total: displayTotal }
             };
         });

@@ -56,8 +56,13 @@ export async function generateInvoicePDF(data: PDFInput): Promise<Buffer> {
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(22);
         doc.setTextColor(20, 50, 150);
-        const typeLabel = (p.type === 'simplified' || data.invoice.invoice_type === 'simplified')
-            ? 'SIMPLIFIED TAX INVOICE' : 'TAX INVOICE';
+        const isSimplified = p.type === 'simplified' || data.invoice.invoice_type === 'simplified';
+        const docType = p.documentType || data.invoice.document_type || '388';
+        const baseLabel =
+            docType === '381' ? 'CREDIT NOTE' :
+            docType === '383' ? 'DEBIT NOTE' :
+            'TAX INVOICE';
+        const typeLabel = isSimplified ? `SIMPLIFIED ${baseLabel}` : baseLabel;
         doc.text(typeLabel, m, 25);
 
         doc.setFontSize(10);

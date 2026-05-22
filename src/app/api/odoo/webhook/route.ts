@@ -123,6 +123,13 @@ export async function POST(req: NextRequest) {
                 invoiceId: data.id,
                 uuid: data.uuid,
                 zatcaStatus: data.status,
+                documentType: body.documentType || '388',
+                documentTypeLabel:
+                    body.documentType === '381' ? 'Credit Note' :
+                    body.documentType === '383' ? 'Debit Note' :
+                    'Tax Invoice',
+                invoiceType: body.type,
+                originalInvoiceId: body.originalInvoiceId || null,
                 validationMessages: data.validationMessages ?? [],
                 qrCode: data.qrCode,
                 invoiceHash: data.hash,
@@ -256,7 +263,9 @@ export async function POST(req: NextRequest) {
                         qrCode: result.data.qrCode,
                         xml: result.data.xml,
                         pdfBase64,
-                        xmlBase64
+                        xmlBase64,
+                        documentType: odooInvoice.documentType,
+                        originalInvoiceId: odooInvoice.originalInvoiceId
                     });
                 } else {
                     await odoo.writebackStatus(Number(odooInvoiceId), {
@@ -291,6 +300,13 @@ export async function POST(req: NextRequest) {
                 invoiceId: data.id,
                 uuid: data.uuid,
                 zatcaStatus: data.status,
+                documentType: odooInvoice.documentType,
+                documentTypeLabel:
+                    odooInvoice.documentType === '381' ? 'Credit Note' :
+                    odooInvoice.documentType === '383' ? 'Debit Note' :
+                    'Tax Invoice',
+                invoiceType: odooInvoice.type,
+                originalInvoiceId: odooInvoice.originalInvoiceId || null,
                 writebackSuccess: true,
                 validationMessages: data.validationMessages ?? [],
                 qrCode: data.qrCode,
