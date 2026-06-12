@@ -63,11 +63,11 @@ export default function DashboardPage() {
           <div className="max-w-2xl mx-auto text-center space-y-12">
             <div className="card-pro p-10 bg-white border-2 border-dashed border-gray-100 flex flex-col items-center">
               <div className="w-16 h-16 bg-orange-50 text-orange-600 rounded-full flex items-center justify-center text-3xl mb-8">🏗️</div>
-              <h1 className="h1 mb-2">Connect Odoo Integration</h1>
-              <p className="body-text text-sm max-w-md mx-auto mb-8">Welcome to the ZATCA Middleware. Your Odoo gateway is active but no Odoo integration credentials have been set up yet.</p>
+              <h1 className="h1 mb-2">Connect Zoho Books Integration</h1>
+              <p className="body-text text-sm max-w-md mx-auto mb-8">Welcome to the ZATCA Middleware. Your Zoho gateway is active but no Zoho Books integration credentials have been set up yet.</p>
 
-              <Link href="/admin/odoo/settings" className="btn-pro h-12 px-10 bg-orange-600 hover:scale-105 transition-transform shadow-2xl shadow-orange-500/20 text-white font-bold flex items-center justify-center">
-                Configure Odoo Settings
+              <Link href="/admin/zoho/settings" className="btn-pro h-12 px-10 bg-orange-600 hover:scale-105 transition-transform shadow-2xl shadow-orange-500/20 text-white font-bold flex items-center justify-center">
+                Configure Zoho Settings
               </Link>
 
               <p className="text-[10px] text-gray-300 font-bold mt-8 uppercase tracking-widest italic">Setup requires your official Saudi Tax ID (TIN).</p>
@@ -85,7 +85,7 @@ export default function DashboardPage() {
           <div className="card-pro p-10 bg-amber-50 border-amber-100 text-center max-w-lg mx-auto">
             <h3 className="h3 mb-2 text-amber-700">Authorization Required</h3>
             <p className="small-text mb-6">This organization is not authorized on this device. Please make sure your API Key is linked.</p>
-            <Link href="/admin/odoo/settings" className="btn-pro bg-amber-500 text-white font-bold flex items-center justify-center">Configure Odoo</Link>
+            <Link href="/admin/zoho/settings" className="btn-pro bg-amber-500 text-white font-bold flex items-center justify-center">Configure Zoho</Link>
           </div>
         </div>
       </div>
@@ -102,7 +102,7 @@ export default function DashboardPage() {
         <div className="container">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h1 className="h1 mb-1">Odoo Sync Center</h1>
+              <h1 className="h1 mb-1">Zoho Sync Center</h1>
               <div className="flex items-center gap-3">
                 <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-black uppercase tracking-widest ${isLive ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
                   {isLive ? 'Live Gate' : 'Sandbox Mode'}
@@ -119,8 +119,8 @@ export default function DashboardPage() {
               </div>
             </div>
             <div className="flex gap-2">
-              <Link href="/admin/odoo/settings" className="btn-pro bg-orange-600 text-white font-bold">
-                Odoo Settings
+              <Link href="/admin/zoho/settings" className="btn-pro bg-orange-600 text-white font-bold">
+                Zoho Settings
               </Link>
               <Link href="/onboarding" className="btn-pro btn-pro-secondary font-bold">
                 ZATCA Onboarding
@@ -222,7 +222,7 @@ export default function DashboardPage() {
                 </div>
                 <div className="flex justify-between items-center py-1 border-b border-gray-100">
                   <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Type</span>
-                  <span className="text-[13px] font-black">Odoo ERP Node</span>
+                  <span className="text-[13px] font-black">Zoho Books Node</span>
                 </div>
                 <div className="flex justify-between items-center py-1 border-b border-gray-50">
                   <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">ZATCA Environment</span>

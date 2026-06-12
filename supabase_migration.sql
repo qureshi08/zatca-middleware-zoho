@@ -14,3 +14,22 @@ WHERE production_csid IS NOT NULL AND onboarding_step = 'none';
 UPDATE zatca_profiles
 SET onboarding_step = 'compliance_requested'
 WHERE compliance_csid IS NOT NULL AND production_csid IS NULL AND onboarding_step = 'none';
+
+-- Zoho Books integration settings (replaces the previous Odoo integration table)
+CREATE TABLE IF NOT EXISTS zoho_config (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE UNIQUE,
+    zoho_region TEXT NOT NULL DEFAULT 'sa',
+    zoho_org_id TEXT NOT NULL,
+    zoho_client_id TEXT NOT NULL,
+    zoho_client_secret TEXT NOT NULL,
+    zoho_refresh_token TEXT NOT NULL,
+    auto_submit BOOLEAN NOT NULL DEFAULT TRUE,
+    status TEXT NOT NULL DEFAULT 'disconnected',
+    last_sync TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+-- If migrating from a previous Odoo deployment, drop the old table once data is no longer needed:
+-- DROP TABLE IF EXISTS odoo_config;

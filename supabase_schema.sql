@@ -80,14 +80,15 @@ CREATE TABLE IF NOT EXISTS transaction_logs (
 
 CREATE INDEX IF NOT EXISTS idx_logs_org_date ON transaction_logs (organization_id, created_at DESC);
 
--- 6. ODOO ERP INTEGRATION SETTINGS
-CREATE TABLE IF NOT EXISTS odoo_config (
+-- 6. ZOHO BOOKS INTEGRATION SETTINGS
+CREATE TABLE IF NOT EXISTS zoho_config (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE UNIQUE,
-    odoo_url TEXT NOT NULL,
-    odoo_db TEXT NOT NULL,
-    odoo_username TEXT NOT NULL,
-    odoo_password TEXT NOT NULL,
+    zoho_region TEXT NOT NULL DEFAULT 'sa', -- Data-center suffix: sa | com | eu | in | com.au | jp | ca
+    zoho_org_id TEXT NOT NULL,              -- Zoho Books organization_id
+    zoho_client_id TEXT NOT NULL,           -- OAuth2 client id
+    zoho_client_secret TEXT NOT NULL,       -- OAuth2 client secret
+    zoho_refresh_token TEXT NOT NULL,       -- OAuth2 refresh token
     auto_submit BOOLEAN NOT NULL DEFAULT TRUE,
     status TEXT NOT NULL DEFAULT 'disconnected',
     last_sync TIMESTAMPTZ,

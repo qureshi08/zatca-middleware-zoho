@@ -2,14 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { AuthService } from '@/lib/auth-service';
 import { generateInvoiceAction } from '@/lib/zatca/actions';
 import { supabaseAdmin } from '@/lib/supabase';
-import { OdooClient } from '@/lib/odoo/client';
+import { ZohoClient, type ZohoEntityType } from '@/lib/zoho/client';
 import { generateInvoicePDF } from '@/lib/zatca/pdf/generator';
 
 /**
- * POST /api/odoo/webhook
+ * POST /api/zoho/webhook
  *
- * Odoo Integration Webhook.
- * Authenticates using `x-api-key`.
+ * Zoho Books Integration Webhook.
+ * Authenticates using `x-api-key` (header or ?apiKey=).
  *
  * Request body:
  * 1. Push Mode (Full Payload):
@@ -24,21 +24,20 @@ import { generateInvoicePDF } from '@/lib/zatca/pdf/generator';
  *   "creditReason": "Return"
  * }
  *
- * 2. Pull & Writeback Mode (Odoo ID only):
+ * 2. Pull & Writeback Mode (Zoho document id only):
  * {
  *   "action": "pull",
- *   "odooInvoiceId": 12
+ *   "zohoInvoiceId": "460000000012345",
+ *   "entityType": "invoice" | "creditnote"   // optional, defaults to invoice
  * }
  */
 export async function POST(req: NextRequest) {
-    // Check both header and URL query parameters for the API key
     const apiKey = req.headers.get('x-api-key') || req.nextUrl.searchParams.get('apiKey');
-    
+
     if (!apiKey) {
         return NextResponse.json({ error: 'Missing API Key (header x-api-key or ?apiKey=)' }, { status: 401 });
     }
 
-    // 1. Authenticate Organization
     const organization = await AuthService.validateAPIKey(apiKey) as any;
     if (!organization) {
         return NextResponse.json({ error: 'Invalid or revoked API Key' }, { status: 401 });
@@ -46,9 +45,10 @@ export async function POST(req: NextRequest) {
 
     try {
         const body = await req.json();
-        
-        // Auto-detect Odoo native webhook payload
-        const action = body.action || (body._model === 'account.move' ? 'pull' : 'push');
+
+        // Auto-detect action: Zoho native webhooks may post the raw document JSON.
+        const inferredId = body.zohoInvoiceId || body.invoice_id || body.creditnote_id;
+        const action = body.action || (inferredId ? 'pull' : 'push');
 
         // ==========================================
         // FLOW A: PUSH MODE (Full Payload)
@@ -61,10 +61,8 @@ export async function POST(req: NextRequest) {
                 }, { status: 400 });
             }
 
-            // 1. Process invoice through core ZATCA logic
             const result = await generateInvoiceAction(body, organization.id);
 
-            // 2. Log transaction
             await supabaseAdmin.from('transaction_logs').insert({
                 organization_id: organization.id,
                 request_type: body.type === 'simplified' ? 'reporting' : 'clearance',
@@ -74,9 +72,8 @@ export async function POST(req: NextRequest) {
                 response_payload: { ...result, body }
             });
 
-            // 3. Persist invoice to dashboard
             if (result.success && result.data) {
-                const invoiceStatus = result.data.status === 'CLEARED' ? 'cleared' : 
+                const invoiceStatus = result.data.status === 'CLEARED' ? 'cleared' :
                                       result.data.status === 'REPORTED' ? 'reported' : 'cleared';
                 const items = body.items || [];
                 const subtotal = items.reduce((acc: number, item: any) => acc + (item.quantity * item.unitPrice), 0);
@@ -142,71 +139,70 @@ export async function POST(req: NextRequest) {
         // FLOW B: PULL & WRITEBACK MODE
         // ==========================================
         if (action === 'pull') {
-            // Support both custom python script payload AND native Odoo webhook payload
-            const odooInvoiceId = body.odooInvoiceId || body._id;
-            
-            if (!odooInvoiceId) {
-                return NextResponse.json({ error: 'Missing odooInvoiceId or _id for pull action' }, { status: 400 });
+            const zohoInvoiceId = inferredId;
+            const entityType: ZohoEntityType = body.entityType
+                || (body.creditnote_id ? 'creditnote' : 'invoice');
+
+            if (!zohoInvoiceId) {
+                return NextResponse.json({ error: 'Missing zohoInvoiceId (or invoice_id / creditnote_id) for pull action' }, { status: 400 });
             }
 
-            // 1. Fetch Odoo Connection settings from the database
+            // 1. Fetch Zoho connection settings from the database
             const { data: config, error: configError } = await supabaseAdmin
-
-                .from('odoo_config')
+                .from('zoho_config')
                 .select('*')
                 .eq('organization_id', organization.id)
                 .maybeSingle();
 
             if (configError || !config) {
                 return NextResponse.json({
-                    error: 'Odoo integration is not configured. Please complete setup in the dashboard.'
+                    error: 'Zoho Books integration is not configured. Please complete setup in the dashboard.'
                 }, { status: 400 });
             }
 
-            // 2. Initialize Odoo Client
-            const odoo = new OdooClient({
-                odooUrl: config.odoo_url,
-                odooDb: config.odoo_db,
-                odooUsername: config.odoo_username,
-                odooPassword: config.odoo_password
+            // 2. Initialize Zoho client
+            const zoho = new ZohoClient({
+                zohoRegion: config.zoho_region,
+                zohoOrgId: config.zoho_org_id,
+                zohoClientId: config.zoho_client_id,
+                zohoClientSecret: config.zoho_client_secret,
+                zohoRefreshToken: config.zoho_refresh_token,
             });
 
-            // 3. Fetch invoice details from Odoo
-            let odooInvoice;
+            // 3. Fetch document details from Zoho
+            let zohoInvoice;
             try {
-                odooInvoice = await odoo.getInvoice(Number(odooInvoiceId));
+                zohoInvoice = await zoho.getInvoice(String(zohoInvoiceId), entityType);
             } catch (err: any) {
                 return NextResponse.json({
-                    error: `Failed to fetch invoice from Odoo: ${err.message}`
+                    error: `Failed to fetch document from Zoho Books: ${err.message}`
                 }, { status: 422 });
             }
 
             // 4. Submit invoice to ZATCA
-            const result = await generateInvoiceAction(odooInvoice, organization.id);
+            const result = await generateInvoiceAction(zohoInvoice, organization.id);
 
-            // Log results
             await supabaseAdmin.from('transaction_logs').insert({
                 organization_id: organization.id,
-                request_type: odooInvoice.type === 'simplified' ? 'reporting' : 'clearance',
-                invoice_number: odooInvoice.invoiceId,
+                request_type: zohoInvoice.type === 'simplified' ? 'reporting' : 'clearance',
+                invoice_number: zohoInvoice.invoiceId,
                 invoice_hash: result.success ? (result.data?.hash || result.data?.uuid) : null,
                 status: result.success ? 'success' : 'failure',
-                response_payload: { ...result, body: odooInvoice }
+                response_payload: { ...result, body: zohoInvoice }
             });
 
-            // Persist to dashboard
             if (result.success && result.data) {
-                const invoiceStatus = result.data.status === 'CLEARED' ? 'cleared' : 
+                const invoiceStatus = result.data.status === 'CLEARED' ? 'cleared' :
                                       result.data.status === 'REPORTED' ? 'reported' : 'cleared';
-                const items = odooInvoice.items || [];
+                const items = zohoInvoice.items || [];
                 const subtotal = items.reduce((acc: number, item: any) => acc + (item.quantity * item.unitPrice), 0);
                 const vatTotal = items.reduce((acc: number, item: any) => acc + (item.quantity * item.unitPrice * (item.vatRate || 15) / 100), 0);
 
                 await supabaseAdmin.from('invoices').upsert({
                     organization_id: organization.id,
-                    invoice_number: odooInvoice.invoiceId,
-                    invoice_type: odooInvoice.type,
-                    document_type: odooInvoice.documentType || '388',
+                    invoice_number: zohoInvoice.invoiceId,
+                    invoice_type: zohoInvoice.type,
+                    document_type: zohoInvoice.documentType || '388',
                     status: invoiceStatus,
                     total_amount: subtotal + vatTotal,
                     zatca_status: result.data.status,
@@ -214,7 +210,7 @@ export async function POST(req: NextRequest) {
                     qr_code: result.data.qrCode,
                     xml: result.data.xml,
                     payload: {
-                        ...odooInvoice,
+                        ...zohoInvoice,
                         total: subtotal + vatTotal,
                         vatAmount: vatTotal,
                         subtotal,
@@ -229,22 +225,21 @@ export async function POST(req: NextRequest) {
                 });
             }
 
-            // 5. Write back results to Odoo
+            // 5. Write back results to Zoho
             try {
                 if (result.success && result.data) {
-                    // Generate PDF compliance report with embedded QR code
                     let pdfBase64: string | undefined;
                     try {
                         const pdfBuffer = await generateInvoicePDF({
                             invoice: {
-                                invoice_number: odooInvoice.invoiceId,
-                                invoice_type: odooInvoice.type,
+                                invoice_number: zohoInvoice.invoiceId,
+                                invoice_type: zohoInvoice.type,
                                 status: (result.data.status === 'CLEARED' || result.data.status === 'REPORTED') ? 'cleared' : 'submitted',
                                 created_at: new Date().toISOString(),
                                 payload: {
-                                    ...odooInvoice,
+                                    ...zohoInvoice,
                                     seller: result.data.seller,
-                                    items: odooInvoice.items || [],
+                                    items: zohoInvoice.items || [],
                                 }
                             },
                             qrCode: result.data.qrCode,
@@ -252,30 +247,28 @@ export async function POST(req: NextRequest) {
                         });
                         pdfBase64 = pdfBuffer.toString('base64');
                     } catch (pdfErr: any) {
-                        console.error(`[Webhook PDF Gen Error] Invoice ID ${odooInvoiceId}:`, pdfErr.message);
+                        console.error(`[Zoho Webhook PDF Gen Error] Doc ID ${zohoInvoiceId}:`, pdfErr.message);
                     }
 
-                    const xmlBase64 = result.data.xml ? Buffer.from(result.data.xml).toString('base64') : undefined;
-
-                    await odoo.writebackStatus(Number(odooInvoiceId), {
+                    await zoho.writebackStatus(String(zohoInvoiceId), {
                         status: (result.data.status === 'CLEARED' || result.data.status === 'REPORTED') ? 'cleared' : 'submitted',
                         uuid: result.data.uuid,
                         qrCode: result.data.qrCode,
                         xml: result.data.xml,
                         pdfBase64,
-                        xmlBase64,
-                        documentType: odooInvoice.documentType,
-                        originalInvoiceId: odooInvoice.originalInvoiceId
+                        documentType: zohoInvoice.documentType,
+                        originalInvoiceId: zohoInvoice.originalInvoiceId,
+                        entityType,
                     });
                 } else {
-                    await odoo.writebackStatus(Number(odooInvoiceId), {
+                    await zoho.writebackStatus(String(zohoInvoiceId), {
                         status: 'failed',
-                        error: result.error || 'ZATCA Clearance failed'
+                        error: result.error || 'ZATCA Clearance failed',
+                        entityType,
                     });
                 }
             } catch (writeError: any) {
-                console.error(`[Odoo Writeback Error] Invoice ID ${odooInvoiceId}:`, writeError.message);
-                // Return success anyway, since ZATCA cleared it, but note the writeback failure
+                console.error(`[Zoho Writeback Error] Doc ID ${zohoInvoiceId}:`, writeError.message);
                 return NextResponse.json({
                     success: result.success,
                     uuid: result.data?.uuid,
@@ -300,13 +293,13 @@ export async function POST(req: NextRequest) {
                 invoiceId: data.id,
                 uuid: data.uuid,
                 zatcaStatus: data.status,
-                documentType: odooInvoice.documentType,
+                documentType: zohoInvoice.documentType,
                 documentTypeLabel:
-                    odooInvoice.documentType === '381' ? 'Credit Note' :
-                    odooInvoice.documentType === '383' ? 'Debit Note' :
+                    zohoInvoice.documentType === '381' ? 'Credit Note' :
+                    zohoInvoice.documentType === '383' ? 'Debit Note' :
                     'Tax Invoice',
-                invoiceType: odooInvoice.type,
-                originalInvoiceId: odooInvoice.originalInvoiceId || null,
+                invoiceType: zohoInvoice.type,
+                originalInvoiceId: zohoInvoice.originalInvoiceId || null,
                 writebackSuccess: true,
                 validationMessages: data.validationMessages ?? [],
                 qrCode: data.qrCode,

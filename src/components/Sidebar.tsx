@@ -105,16 +105,16 @@ export default function Sidebar({ mode: _unused }: { mode: string }) {
                 <>
                     <div className="mb-8 p-4 bg-orange-50 rounded-2xl border border-orange-100">
                         <label className="text-[9px] font-black text-orange-400 uppercase tracking-widest mb-1 block">Active Integration</label>
-                        <p className="text-[13px] font-bold text-gray-900 truncate">Odoo ERP Connection</p>
+                        <p className="text-[13px] font-bold text-gray-900 truncate">Zoho Books Connection</p>
                     </div>
 
                     <nav className="flex-1 space-y-6 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 280px)' }}>
                         <div>
                             <div className="nav-label">Core Services</div>
                             <Link href="/" className={`nav-item${isActive('/') ? ' active' : ''}`}>{Icon.grid} Dashboard</Link>
-                            <Link href="/admin/odoo/settings" className={`nav-item${isActive('/admin/odoo/settings') ? ' active' : ''}`}>
+                            <Link href="/admin/zoho/settings" className={`nav-item${isActive('/admin/zoho/settings') ? ' active' : ''}`}>
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 20A7 7 0 0 1 11 6a7 7 0 0 1 7 7M11 20a7 7 0 0 0 7-7M11 20l-4 4M18 13l4-4" /></svg>
-                                Odoo Settings
+                                Zoho Settings
                             </Link>
                         </div>
 
@@ -132,10 +132,10 @@ export default function Sidebar({ mode: _unused }: { mode: string }) {
             ) : (
                 <div className="flex-1 flex flex-col gap-5 pt-2 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 220px)' }}>
                     <div className="p-5 bg-orange-50 rounded-2xl border border-orange-100 text-center">
-                        <h3 className="text-[12px] font-extrabold text-orange-800 mb-1.5 uppercase tracking-wider">Odoo ZATCA Gateway</h3>
-                        <p className="text-[10px] text-orange-700/80 mb-4 leading-relaxed">Sign in or register your organization to link your Odoo ERP database to the ZATCA e-invoicing service.</p>
+                        <h3 className="text-[12px] font-extrabold text-orange-800 mb-1.5 uppercase tracking-wider">Zoho ZATCA Gateway</h3>
+                        <p className="text-[10px] text-orange-700/80 mb-4 leading-relaxed">Sign in or register your organization to link your Zoho Books account to the ZATCA e-invoicing service.</p>
                         <Link href="/login" className="block w-full h-9 bg-orange-600 text-white rounded-lg text-[11px] font-bold flex items-center justify-center hover:bg-orange-700 transition-all">Sign In</Link>
-                        <Link href="/register?intent=odoo" className="block mt-2 text-[10px] text-orange-700 font-bold hover:underline">Register Business →</Link>
+                        <Link href="/register?intent=zoho" className="block mt-2 text-[10px] text-orange-700 font-bold hover:underline">Register Business →</Link>
                     </div>
                 </div>
             )}
@@ -145,7 +145,7 @@ export default function Sidebar({ mode: _unused }: { mode: string }) {
                     <div className={`w-1.5 h-1.5 rounded-full ${user ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`} />
                     <span className="text-[10px] font-bold text-gray-400 uppercase tracking-tight">System Status: {user ? 'Connected' : 'Standby'}</span>
                 </div>
-                <p className="text-[9px] text-gray-300 font-bold uppercase tracking-widest">Version 1.0.0 · Odoo Node</p>
+                <p className="text-[9px] text-gray-300 font-bold uppercase tracking-widest">Version 1.0.0 · Zoho Node</p>
             </div>
         </aside>
     );

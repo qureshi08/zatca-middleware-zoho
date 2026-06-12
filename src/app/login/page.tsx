@@ -127,7 +127,7 @@ function LoginContent() {
                     </form>
 
                     <p className="text-center text-gray-500 text-xs mt-8 font-medium">
-                        Need a portal account? <Link href="/register?intent=odoo" className="text-orange-500 hover:underline">Register your business</Link>
+                        Need a portal account? <Link href="/register?intent=zoho" className="text-orange-500 hover:underline">Register your business</Link>
                     </p>
                 </div>
             </div>

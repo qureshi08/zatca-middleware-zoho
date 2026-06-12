@@ -5,8 +5,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 
 /**
  * INSTITUTIONAL REGISTRATION
- * Supports an optional ?intent=odoo query so Odoo-initiated
- * registrations land on the Odoo onboarding flow after the first sign-in
+ * Supports an optional ?intent=zoho query so Zoho-initiated
+ * registrations land on the Zoho onboarding flow after the first sign-in
  * rather than the generic dashboard.
  */
 
@@ -43,8 +43,8 @@ function RegisterContent() {
                 return;
             }
 
-            // Always forward to Odoo Settings after registration/login for this integration
-            const next = '/admin/odoo/settings';
+            // Always forward to Zoho Settings after registration/login for this integration
+            const next = '/admin/zoho/settings';
             const params = new URLSearchParams({ registered: 'true', next });
             router.push(`/login?${params.toString()}`);
         } catch (err: any) {
@@ -66,13 +66,13 @@ function RegisterContent() {
                 <div className="text-center mb-10">
                     <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-orange-500/10 border border-orange-500/20 text-orange-400 text-[10px] font-black uppercase tracking-widest mb-4">
                         <span className="w-1.5 h-1.5 rounded-full bg-orange-400" />
-                        Odoo Integration
+                        Zoho Books Integration
                     </div>
                     <h1 className="text-4xl font-extrabold text-white tracking-tight mb-2">
                         Register Your Business
                     </h1>
                     <p className="text-gray-400 text-sm">
-                        Create your tenant on the ZATCA Middleware. After this you'll run ZATCA compliance and then connect Odoo.
+                        Create your tenant on the ZATCA Middleware. After this you'll run ZATCA compliance and then connect Zoho Books.
                     </p>
                 </div>
 

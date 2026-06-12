@@ -1,9 +1,11 @@
-# 🏦 ZATCA-middleware-odoo
+# 🏦 ZATCA-middleware-zoho
 
 [![ZATCA Phase 2](https://img.shields.io/badge/ZATCA-Phase%202--Compliant-blue)](https://zatca.gov.sa/)
 [![Status](https://img.shields.io/badge/Status-Production--Ready-green)]()
 
-The **ZATCA-middleware-odoo** is a production-grade integration hub for Odoo ERP ZATCA (FATOORA) compliance. It handles the complete onboarding lifecycle, cryptographic signing, and UBL 2.1 XML generation for Phase 2.
+The **ZATCA-middleware-zoho** is a production-grade integration hub for Zoho Books ZATCA (FATOORA) compliance. It handles the complete onboarding lifecycle, cryptographic signing, and UBL 2.1 XML generation for Phase 2.
+
+Integration with Zoho Books uses the **Zoho Books v3 REST API** over **OAuth2**. Invoices and credit notes are pulled by a workflow webhook, cleared/reported with ZATCA, and the UUID, QR code and signed PDF are written back to the document as custom fields, a timeline comment, and a file attachment.
 
 ---
 
