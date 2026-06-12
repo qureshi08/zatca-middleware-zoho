@@ -268,6 +268,12 @@ export class ZohoClient {
         // Document type: credit notes are 381, invoices are 388. A `cf_zatca_document_type`
         // custom field can override (e.g. force 383 debit note).
         let documentType = isCreditNote ? '381' : '388';
+        // Zoho Books KSA exposes Debit Notes as an invoice subtype via the `type`
+        // field (e.g. "debit_note") rather than a separate module, so a regular
+        // invoice pull may actually be a debit note (383).
+        if (!isCreditNote && typeof doc.type === 'string' && doc.type.toLowerCase().includes('debit')) {
+            documentType = '383';
+        }
         const override = (doc.custom_fields || []).find((c: any) =>
             (c.api_name || c.label || '').toLowerCase().includes('zatca_document_type')
         );
