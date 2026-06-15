@@ -416,7 +416,11 @@ export class ZohoClient {
             console.warn('[Zoho] Failed to post comment:', e.message);
         }
 
-        // 3. Attach the compliance PDF (the ZATCA-validated invoice, QR embedded).
+        // 3. Remove any prior ZATCA_* attachments so re-validation replaces rather
+        //    than stacks duplicates, then attach the compliance PDF (QR embedded).
+        if ((data.status === 'cleared' || data.status === 'submitted') && (data.pdfBase64 || data.qrCode)) {
+            await this.deleteExistingZatcaAttachments(base, isCreditNote ? 'creditnote' : 'invoice');
+        }
         if ((data.status === 'cleared' || data.status === 'submitted') && data.pdfBase64) {
             try {
                 await this.uploadAttachment(base, `ZATCA_${documentId}.pdf`, data.pdfBase64, 'application/pdf');
@@ -439,6 +443,28 @@ export class ZohoClient {
         }
 
         return true;
+    }
+
+    /**
+     * Deletes any previously attached ZATCA_* files on a document so a re-run
+     * replaces them instead of accumulating duplicates.
+     */
+    private async deleteExistingZatcaAttachments(basePath: string, envelopeKey: string): Promise<void> {
+        try {
+            const json = await this.request('GET', basePath);
+            const docs = json?.[envelopeKey]?.documents || [];
+            for (const d of docs) {
+                if (typeof d.file_name === 'string' && d.file_name.startsWith('ZATCA_') && d.document_id) {
+                    try {
+                        await this.request('DELETE', `${basePath}/documents/${d.document_id}`);
+                    } catch (e: any) {
+                        console.warn('[Zoho] Failed to delete old attachment:', e.message);
+                    }
+                }
+            }
+        } catch (e: any) {
+            console.warn('[Zoho] Could not list existing attachments for cleanup:', e.message);
+        }
     }
 
     /** Uploads a base64 file as a multipart attachment to a Zoho Books document. */
