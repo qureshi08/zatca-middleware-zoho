@@ -93,13 +93,28 @@ export async function generateInvoicePDF(data: PDFInput): Promise<Buffer> {
         doc.setFontSize(11);
         doc.setTextColor(50);
         doc.text(p.seller?.partyLegalEntity?.registrationName || 'KSA Banking Node', m, y + 6);
-        doc.text(`Invoice No: ${data.invoice.invoice_number}`, m + (cw / 2) + 5, y + 6);
+        const docNoLabel =
+            docType === '381' ? 'Credit Note No' :
+            docType === '383' ? 'Debit Note No' :
+            'Invoice No';
+        doc.text(`${docNoLabel}: ${data.invoice.invoice_number}`, m + (cw / 2) + 5, y + 6);
 
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(9);
         doc.setTextColor(100);
         doc.text(`VAT ID: ${p.seller?.partyTaxScheme?.companyID || '300000000000003'}`, m, y + 11);
         doc.text(`Date: ${new Date(data.invoice.created_at).toLocaleString()}`, m + (cw / 2) + 5, y + 11);
+
+        // For credit/debit notes, surface the original invoice this document corrects
+        // (the ZATCA billing reference) so it is human-readable, not just in the XML.
+        const originalRef = p.originalInvoiceId;
+        if ((docType === '381' || docType === '383') && originalRef) {
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(20, 50, 150);
+            doc.text(`Original Invoice: ${originalRef}`, m + (cw / 2) + 5, y + 16);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(100);
+        }
 
         y += 25;
         doc.setDrawColor(240);
