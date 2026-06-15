@@ -434,7 +434,9 @@ export class ZohoClient {
         }
         if ((data.status === 'cleared' || data.status === 'submitted') && data.pdfBase64) {
             try {
-                await this.uploadAttachment(base, `ZATCA_${documentId}.pdf`, data.pdfBase64, 'application/pdf');
+                // sendInMail=true so the ZATCA-verified PDF is attached automatically
+                // when the user emails the invoice/note from Zoho.
+                await this.uploadAttachment(base, `ZATCA_${documentId}.pdf`, data.pdfBase64, 'application/pdf', true);
             } catch (e: any) {
                 console.warn('[Zoho] Failed to attach PDF:', e.message);
             }
@@ -488,15 +490,21 @@ export class ZohoClient {
         }
     }
 
-    /** Uploads a base64 file as a multipart attachment to a Zoho Books document. */
+    /**
+     * Uploads a base64 file as a multipart attachment to a Zoho Books document.
+     * When `sendInMail` is true, Zoho includes the file automatically whenever the
+     * document is emailed to the customer (the ZATCA-verified PDF rides along).
+     */
     private async uploadAttachment(
         basePath: string,
         filename: string,
         base64: string,
-        mimeType: string
+        mimeType: string,
+        sendInMail = false
     ): Promise<void> {
         const token = await this.getAccessToken();
         const query = new URLSearchParams({ organization_id: this.orgId });
+        if (sendInMail) query.set('can_send_in_mail', 'true');
         const url = `${this.apiHost}/books/v3${basePath}/attachment?${query.toString()}`;
 
         const bytes = Buffer.from(base64, 'base64');
