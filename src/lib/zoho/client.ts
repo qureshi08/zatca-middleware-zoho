@@ -304,7 +304,18 @@ export class ZohoClient {
                     : '';
                 originalInvoiceId = doc.invoice_number || appliedNo || doc.reference_number || '';
             } else {
-                originalInvoiceId = doc.reference_number || '';
+                // Debit notes: the invoice-as-debit-note approach types the number into
+                // `reference_number`; native Zoho debit notes leave that empty and expose
+                // the linked invoice under the `reference_invoice` object instead.
+                originalInvoiceId =
+                    doc.reference_number ||
+                    doc.reference_invoice?.reference_invoice_number ||
+                    '';
+            }
+
+            // Last resort: resolve an internal reference invoice id -> human number.
+            if (!originalInvoiceId && doc.reference_invoice?.reference_invoice_id) {
+                originalInvoiceId = await this.resolveInvoiceNumber(doc.reference_invoice.reference_invoice_id);
             }
 
             // Never fabricate a reference: a ZATCA adjustment without the real original
@@ -443,6 +454,16 @@ export class ZohoClient {
         }
 
         return true;
+    }
+
+    /** Resolves a Zoho invoice internal id to its human-readable invoice number. */
+    private async resolveInvoiceNumber(invoiceId: string): Promise<string> {
+        try {
+            const json = await this.request('GET', `/invoices/${invoiceId}`);
+            return json?.invoice?.invoice_number || '';
+        } catch {
+            return '';
+        }
     }
 
     /**
