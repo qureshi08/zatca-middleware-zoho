@@ -432,18 +432,10 @@ export class ZohoClient {
         if ((data.status === 'cleared' || data.status === 'submitted') && (data.pdfBase64 || data.qrCode)) {
             await this.deleteExistingZatcaAttachments(base, isCreditNote ? 'creditnote' : 'invoice');
         }
-        if ((data.status === 'cleared' || data.status === 'submitted') && data.pdfBase64) {
-            try {
-                // sendInMail=true so the ZATCA-verified PDF is attached automatically
-                // when the user emails the invoice/note from Zoho.
-                await this.uploadAttachment(base, `ZATCA_${documentId}.pdf`, data.pdfBase64, 'application/pdf', true);
-            } catch (e: any) {
-                console.warn('[Zoho] Failed to attach PDF:', e.message);
-            }
-        }
-
-        // 4. Attach the QR as a standalone PNG so it's directly viewable on the
-        //    document inside Zoho (the qrCode arrives as a data:image/png;base64 URI).
+        // 4. Attach the QR PNG FIRST so it's viewable, then the PDF LAST. The last
+        //    upload becomes the invoice's primary `attachment_name`, which is the file
+        //    Zoho includes when the document is emailed — so the customer gets the
+        //    ZATCA-verified PDF automatically, no manual selection.
         if ((data.status === 'cleared' || data.status === 'submitted') && data.qrCode) {
             const m = data.qrCode.match(/^data:image\/png;base64,(.+)$/);
             if (m) {
@@ -452,6 +444,13 @@ export class ZohoClient {
                 } catch (e: any) {
                     console.warn('[Zoho] Failed to attach QR image:', e.message);
                 }
+            }
+        }
+        if ((data.status === 'cleared' || data.status === 'submitted') && data.pdfBase64) {
+            try {
+                await this.uploadAttachment(base, `ZATCA_${documentId}.pdf`, data.pdfBase64, 'application/pdf', true);
+            } catch (e: any) {
+                console.warn('[Zoho] Failed to attach PDF:', e.message);
             }
         }
 
