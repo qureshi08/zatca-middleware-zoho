@@ -283,25 +283,40 @@ export class ZohoClient {
 
         const isAdjustment = documentType === '381' || documentType === '383';
 
-        // Original invoice reference for credit/debit notes. Zoho stores applied invoices
-        // under `invoices_credited` (credit notes) or a reference field.
-        let originalInvoiceId = '';
-        if (isAdjustment) {
-            const applied = doc.invoices_credited || doc.invoices || [];
-            if (Array.isArray(applied) && applied.length > 0) {
-                originalInvoiceId = applied[0].invoice_number || applied[0].invoice_id || '';
-            }
-            if (!originalInvoiceId && doc.reference_number) {
-                originalInvoiceId = doc.reference_number;
-            }
-            if (!originalInvoiceId) {
-                originalInvoiceId = 'INV-0000';
-            }
-        }
-
         const docNumber = isCreditNote
             ? (doc.creditnote_number || `CN-${documentId}`)
             : (doc.invoice_number || `INV-${documentId}`);
+
+        // Original invoice reference for credit/debit notes — REQUIRED by ZATCA
+        // (rendered as cac:BillingReference/InvoiceDocumentReference in the UBL).
+        //
+        // The source field differs by document kind:
+        //  - Credit note: Zoho KSA links the corrected invoice at the header level
+        //    (`invoice_number` / `invoice_id`). `invoices_credited` only fills once the
+        //    credit is *applied* as payment, so it is a last resort, not the primary.
+        //  - Debit note (an invoice subtype): `invoice_number` is the note's OWN number,
+        //    so the original is referenced via `reference_number`.
+        let originalInvoiceId = '';
+        if (isAdjustment) {
+            if (isCreditNote) {
+                const appliedNo = Array.isArray(doc.invoices_credited) && doc.invoices_credited[0]
+                    ? (doc.invoices_credited[0].invoice_number || doc.invoices_credited[0].invoice_id)
+                    : '';
+                originalInvoiceId = doc.invoice_number || appliedNo || doc.reference_number || '';
+            } else {
+                originalInvoiceId = doc.reference_number || '';
+            }
+
+            // Never fabricate a reference: a ZATCA adjustment without the real original
+            // invoice is non-compliant, so fail loudly instead of emitting a fake one.
+            if (!originalInvoiceId) {
+                const label = documentType === '381' ? 'credit note' : 'debit note';
+                throw new Error(
+                    `This ${label} (${docNumber}) has no linked original invoice. ZATCA requires a billing ` +
+                    `reference for adjustment documents — associate it with the original invoice in Zoho before validating.`
+                );
+            }
+        }
 
         return {
             type,
